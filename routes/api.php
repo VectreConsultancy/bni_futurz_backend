@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MasterDataController;
 use App\Http\Controllers\Api\ResponsibilityController;
+use App\Http\Controllers\Api\EventController;
 
 Route::post('/auth/send-otp', [AuthController::class, 'sendOtp']);
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -25,4 +26,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/responsibilities/{id}', [ResponsibilityController::class, 'show']);
     Route::put('/responsibilities/{id}', [ResponsibilityController::class, 'update']);
     // Route::delete('/responsibilities/{id}', [ResponsibilityController::class, 'destroy']);
+
+    // Event APIs
+    Route::get('/events', [EventController::class, 'index']);
+    Route::post('/events', [EventController::class, 'store']);
 });
