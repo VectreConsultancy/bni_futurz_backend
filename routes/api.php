@@ -4,6 +4,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\MasterDataController;
+use App\Http\Controllers\Api\ResponsibilityController;
 
 Route::post('/auth/send-otp', [AuthController::class, 'sendOtp']);
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -15,5 +17,12 @@ Route::get('/user', function (Request $request) {
 // Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+    Route::get('/coordinator-categories', [MasterDataController::class, 'getCategories']);
 
+    // Responsibility APIs
+    Route::get('/responsibilities', [ResponsibilityController::class, 'index']);
+    Route::post('/responsibilities', [ResponsibilityController::class, 'store']);
+    Route::get('/responsibilities/{id}', [ResponsibilityController::class, 'show']);
+    Route::put('/responsibilities/{id}', [ResponsibilityController::class, 'update']);
+    // Route::delete('/responsibilities/{id}', [ResponsibilityController::class, 'destroy']);
 });
