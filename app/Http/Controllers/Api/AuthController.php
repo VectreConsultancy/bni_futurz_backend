@@ -5,7 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 
-use App\Models\Member;
+use App\Models\User;
+use App\Models\OtpVerification;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -25,26 +26,29 @@ class AuthController extends Controller
             return response()->json(['error' => $validator->errors()], 422);
         }
 
-        $member = Member::where('mobile_no', $request->mobile_no)->first();
+        $user = User::where('mobile_no', $request->mobile_no)->first();
 
-        // If member doesn't exist, we can create one or return error. 
-        // For BNI, let's assume they should exist.
-        if (!$member) {
-            return response()->json(['message' => 'Member not found with this mobile number.'], 404);
+        if (!$user) {
+            return response()->json(['message' => 'User not found with this mobile number.'], 404);
         }
 
         $otp = 654321; //rand(100000, 999999);
-        $member->update([
-            'otp' => $otp,
-            'otp_expires_at' => Carbon::now()->addMinutes(5),
-        ]);
+        
+        // Update or create OTP verification record
+        OtpVerification::updateOrCreate(
+            ['identifier' => $request->mobile_no, 'type' => 'login'],
+            [
+                'otp' => $otp,
+                'is_verified' => false,
+                'expires_at' => Carbon::now()->addMinutes(5),
+            ]
+        );
 
-        // Simulating SMS sending
         Log::info("OTP for {$request->mobile_no}: {$otp}");
 
         return response()->json([
             'message' => 'OTP sent successfully.',
-            'otp' => $otp, // Returning OTP for testing as per plan
+            'otp' => $otp,
         ]);
     }
 
@@ -62,28 +66,63 @@ class AuthController extends Controller
             return response()->json(['error' => $validator->errors()], 422);
         }
 
-        $member = Member::where('mobile_no', $request->mobile_no)
+        $otpVerification = OtpVerification::where('identifier', $request->mobile_no)
+            ->where('type', 'login')
             ->where('otp', $request->otp)
-            ->where('otp_expires_at', '>', Carbon::now())
+            ->where('expires_at', '>', Carbon::now())
             ->first();
 
-        if (!$member) {
+        if (!$otpVerification) {
             return response()->json(['message' => 'Invalid or expired OTP.'], 401);
         }
 
-        // Clear OTP after login
-        $member->update([
-            'otp' => null,
-            'otp_expires_at' => null,
-        ]);
+        $user = User::where('mobile_no', $request->mobile_no)->first();
 
-        $token = $member->createToken('auth_token')->plainTextToken;
+        if (!$user) {
+            return response()->json(['message' => 'User account not found.'], 404);
+        }
+
+        // Mark as verified
+        $otpVerification->update(['is_verified' => true]);
+
+        // $tokenName = $request->device_name ?: 'auth_token';
+        // $token = $user->createToken($tokenName)->plainTextToken;
+
+        // // Saving token to remember_token as per request
+        // $user->remember_token = $token;
+        // $user->save();
+
+        $tokenName = $request->device_name ?: 'api-token';
+        $validityDays = 10;
+        $token = $user->createToken($tokenName, ['*'], now()->addDays($validityDays));
+        $plainToken = $token->plainTextToken;
+        $user->remember_token = $plainToken;
+        $user->update();
 
         return response()->json([
             'message' => 'Login successful.',
             'access_token' => $token,
             'token_type' => 'Bearer',
-            'member' => $member,
+            'token_validity' => (string) $validityDays,
+            'user' => $user,
+        ]);
+    }
+
+    public function refreshToken(Request $request)
+    {
+        $user = $request->user();
+        $user->tokens()->delete();
+
+        $token = $user->createToken('api-token', ['*'], now()->addDays(10));
+        $plainToken = $token->plainTextToken;
+        $user->remember_token = $plainToken;
+        $user->update();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Token refreshed successfully',
+            'token' => $plainToken,
+            'tokenType' => 'Bearer',
         ]);
     }
 }

@@ -14,5 +14,6 @@ Route::get('/user', function (Request $request) {
 
 // Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 
 });
