@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\EventAssignment;
+use App\Models\BasicAssignment;
 use App\Models\Responsibility;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -28,6 +29,9 @@ class UserController extends Controller
         ]);
     }
 
+    /**
+     * Get the authenticated user's Basic responsibilities (Level 1).
+     */
     public function getMyBasicResponsibilities()
     {
         $user = auth()->user();
@@ -43,12 +47,79 @@ class UserController extends Controller
             ->with('category')
             ->get();
 
+        $checklistStatuses = BasicAssignment::where('user_id', $user->id)
+            ->whereIn('category_id', $categoryIds)
+            ->pluck('responsibility_checklist', 'category_id');
+
+        $mergedStatus = [];
+        foreach ($checklistStatuses as $catId => $list) {
+            if (is_array($list)) {
+                foreach ($list as $respId => $status) {
+                    $mergedStatus[$respId] = $status;
+                }
+            }
+        }
+
         return response()->json([
             'status' => 'success',
-            'data' => $responsibilities,
+            'data' => [
+                'responsibilities' => $responsibilities,
+                'checklist_status' => (object)$mergedStatus
+            ]
         ]);
     }
 
+    public function updateBasicChecklist(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'checklist' => 'required|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+        }
+
+        $user = auth()->user();
+        $categoryIds = $this->getUserCategoryIds($user);
+        
+        $updates = $request->checklist;
+        $updatedCount = 0;
+
+        foreach ($categoryIds as $catId) {
+            $validRespIds = Responsibility::where('coordinator_id', $catId)
+                ->where('level', 1)
+                ->pluck('id')
+                ->toArray();
+
+            $assignment = BasicAssignment::firstOrCreate(
+                ['user_id' => $user->id, 'category_id' => $catId],
+                ['responsibility_checklist' => []]
+            );
+
+            $currentChecklist = $assignment->responsibility_checklist ?? [];
+            
+            foreach ($updates as $respId => $status) {
+                if (in_array($respId, $validRespIds)) {
+                    $currentChecklist[$respId] = (int)$status;
+                    $updatedCount++;
+                }
+            }
+
+            $assignment->responsibility_checklist = $currentChecklist;
+            $assignment->updated_ip = $request->ip();
+            $assignment->save();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Successfully updated $updatedCount basic responsibility statuses.",
+            'data' => BasicAssignment::where('user_id', $user->id)->get(),
+        ]);
+    }
+
+    /**
+     * Get the authenticated user's Event-wise responsibilities (Level 2).
+     */
     public function getMyEventResponsibilities()
     {
         $user = auth()->user();
@@ -85,7 +156,7 @@ class UserController extends Controller
         }
     }
 
-    public function updateChecklist(Request $request, $id)
+    public function updateEventChecklist(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
             'checklist' => 'required|array',

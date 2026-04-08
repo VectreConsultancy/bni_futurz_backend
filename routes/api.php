@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('user')->group(function () {
         Route::get('/responsibilities/basic', [UserController::class, 'getMyBasicResponsibilities']);
         Route::get('/responsibilities/events', [UserController::class, 'getMyEventResponsibilities']);
-        Route::post('update-checklist/{id}', [UserController::class, 'updateChecklist']);
+        Route::post('update-basic-checklist', [UserController::class, 'updateBasicChecklist']);
+        Route::post('update-checklist/{id}', [UserController::class, 'updateEventChecklist']);
     }); 
 });

@@ -50,7 +50,6 @@ class EventController extends Controller
             $users = User::where('is_active', true)->get();
 
             foreach ($users as $user) {
-                // Get all category IDs for this user
                 $categoryData = $user->category_id;
                 
                 if (is_array($categoryData)) {
@@ -67,7 +66,7 @@ class EventController extends Controller
 
                 foreach ($categoryIds as $catId) {
                     // Fetch responsibilities for this category
-                    $responsibilities = Responsibility::where('coordinator_id', $catId)->get();
+                    $responsibilities = Responsibility::where('coordinator_id', $catId)->where('level', 2)->get();
 
                     if ($responsibilities->isNotEmpty()) {
                         // Create responsibility checklist: { "id": 0, "id": 0 }
