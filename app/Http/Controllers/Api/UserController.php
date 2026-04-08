@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\EventAssignment;
+use App\Models\Responsibility;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -27,10 +28,7 @@ class UserController extends Controller
         ]);
     }
 
-    /**
-     * Get the authenticated user's own responsibilities list.
-     */
-    public function getMyResponsibilities()
+    public function getMyBasicResponsibilities()
     {
         $user = auth()->user();
 
@@ -38,18 +36,10 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
         }
 
-        // Parse category IDs
-        $categoryData = $user->category_id;
-        if (is_array($categoryData)) {
-            $categoryIds = $categoryData;
-        } elseif (is_string($categoryData) && str_contains($categoryData, ',')) {
-            $categoryIds = array_map('trim', explode(',', $categoryData));
-        } else {
-            $categoryIds = $categoryData ? [$categoryData] : [];
-        }
+        $categoryIds = $this->getUserCategoryIds($user);
 
-        // Fetch direct responsibilities for those categories
-        $responsibilities = \App\Models\Responsibility::whereIn('coordinator_id', $categoryIds)
+        $responsibilities = Responsibility::whereIn('coordinator_id', $categoryIds)
+            ->where('level', 1)
             ->with('category')
             ->get();
 
@@ -57,6 +47,42 @@ class UserController extends Controller
             'status' => 'success',
             'data' => $responsibilities,
         ]);
+    }
+
+    public function getMyEventResponsibilities()
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $assignments = $user->eventAssignments()
+            ->with(['event', 'category.responsibilities' => function($q) {
+                $q->where('level', 2);
+            }])
+            ->orderBy('id', 'desc')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $assignments,
+        ]);
+    }
+
+    /**
+     * Helper to parse and return category IDs for a user.
+     */
+    private function getUserCategoryIds($user)
+    {
+        $categoryData = $user->category_id;
+        if (is_array($categoryData)) {
+            return $categoryData;
+        } elseif (is_string($categoryData) && str_contains($categoryData, ',')) {
+            return array_map('trim', explode(',', $categoryData));
+        } else {
+            return $categoryData ? [$categoryData] : [];
+        }
     }
 
     public function updateChecklist(Request $request, $id)

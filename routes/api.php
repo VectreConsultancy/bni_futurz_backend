@@ -37,7 +37,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // User-Specific APIs (Auth Specific)
     Route::prefix('user')->group(function () {
-        Route::get('/responsibilities', [UserController::class, 'getMyResponsibilities']);
+        Route::get('/responsibilities/basic', [UserController::class, 'getMyBasicResponsibilities']);
+        Route::get('/responsibilities/events', [UserController::class, 'getMyEventResponsibilities']);
         Route::post('update-checklist/{id}', [UserController::class, 'updateChecklist']);
     }); 
 });
