@@ -13,4 +13,9 @@ class CoordinatorCategory extends Model
     {
         return $this->belongsTo(Role::class, 'role_id', 'role_id');
     }
+
+    public function responsibilities()
+    {
+        return $this->hasMany(Responsibility::class, 'coordinator_id');
+    }
 }

@@ -18,6 +18,11 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
 
+    public function eventAssignments()
+    {
+        return $this->hasMany(EventAssignment::class, 'user_id');
+    }
+
     protected function casts(): array
     {
         return [

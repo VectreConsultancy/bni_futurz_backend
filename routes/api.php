@@ -7,9 +7,10 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\MasterDataController;
 use App\Http\Controllers\Api\ResponsibilityController;
 use App\Http\Controllers\Api\EventController;
+use App\Http\Controllers\Api\UserController;
 
 Route::post('/auth/send-otp', [AuthController::class, 'sendOtp']);
-Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/login', [AuthController::class, 'login'])->name('login');
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -30,4 +31,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // Event APIs
     Route::get('/events', [EventController::class, 'index']);
     Route::post('/events', [EventController::class, 'store']);
+
+    // User Assignment APIs (Admin)
+    Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
+
+    // User-Specific APIs (Auth Specific)
+    Route::prefix('user')->group(function () {
+        Route::get('/responsibilities', [UserController::class, 'getMyResponsibilities']);
+        Route::post('update-checklist/{id}', [UserController::class, 'updateChecklist']);
+    }); 
 });

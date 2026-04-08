@@ -51,11 +51,19 @@ class EventController extends Controller
 
             foreach ($users as $user) {
                 // Get all category IDs for this user
-                $categoryIds = $user->category_id;
+                $categoryData = $user->category_id;
                 
-                if (!is_array($categoryIds)) {
-                    $categoryIds = $categoryIds ? [$categoryIds] : [];
+                if (is_array($categoryData)) {
+                    $categoryIds = $categoryData;
+                } elseif (is_string($categoryData) && str_contains($categoryData, ',')) {
+                    // Handle comma-separated strings if any legacy data exists
+                    $categoryIds = array_map('trim', explode(',', $categoryData));
+                } else {
+                    $categoryIds = $categoryData ? [$categoryData] : [];
                 }
+
+                // Prevent duplicate processing if same ID appears twice in the array
+                $categoryIds = array_unique($categoryIds);
 
                 foreach ($categoryIds as $catId) {
                     // Fetch responsibilities for this category
@@ -68,14 +76,18 @@ class EventController extends Controller
                             $checklist[$resp->id] = 0;
                         }
 
-                        EventAssignment::create([
-                            'event_id' => $event->id,
-                            'user_id' => $user->id,
-                            'category_id' => $catId,
-                            'responsibility_checklist' => $checklist,
-                            'created_by' => auth()->id(),
-                            'created_ip' => $request->ip(),
-                        ]);
+                        EventAssignment::updateOrCreate(
+                            [
+                                'event_id' => $event->id,
+                                'user_id' => $user->id,
+                                'category_id' => $catId,
+                            ],
+                            [
+                                'responsibility_checklist' => $checklist,
+                                'created_by' => auth()->id(),
+                                'created_ip' => $request->ip(),
+                            ]
+                        );
                     }
                 }
             }
