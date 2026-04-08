@@ -47,24 +47,30 @@ class UserController extends Controller
             ->with('category')
             ->get();
 
-        $checklistStatuses = BasicAssignment::where('user_id', $user->id)
-            ->whereIn('category_id', $categoryIds)
-            ->pluck('responsibility_checklist', 'category_id');
+        // Fetch all basic assignments for this user
+        $assignments = BasicAssignment::where('user_id', $user->id)->get();
 
+        // Merge checklists from all records
         $mergedStatus = [];
-        foreach ($checklistStatuses as $catId => $list) {
+        foreach ($assignments as $assignment) {
+            $list = $assignment->responsibility_checklist ?? [];
             if (is_array($list)) {
                 foreach ($list as $respId => $status) {
-                    $mergedStatus[$respId] = $status;
+                    $mergedStatus[(string)$respId] = (int)$status;
                 }
             }
+        }
+
+        // Map status into specific responsibility objects
+        foreach ($responsibilities as $resp) {
+            $resp->status = $mergedStatus[(string)$resp->id] ?? 0;
         }
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'responsibilities' => $responsibilities,
-                'checklist_status' => (object)$mergedStatus
+                'checklist_status' => (object)$mergedStatus,
             ]
         ]);
     }
@@ -134,6 +140,16 @@ class UserController extends Controller
             }])
             ->orderBy('id', 'desc')
             ->get();
+
+        // Map status into each nested responsibility
+        $assignments->each(function($assignment) {
+            $checklist = $assignment->responsibility_checklist ?? [];
+            if ($assignment->category && $assignment->category->responsibilities) {
+                foreach ($assignment->category->responsibilities as $resp) {
+                    $resp->status = $checklist[$resp->id] ?? 0;
+                }
+            }
+        });
 
         return response()->json([
             'status' => 'success',
