@@ -15,7 +15,22 @@ class EventController extends Controller
 {
     public function index()
     {
-        $events = Event::with('assignments.user', 'assignments.category')->get();
+        $events = Event::with(['assignments.user', 'assignments.category.responsibilities' => function($q) {
+            $q->where('level', 2);
+        }])->get();
+
+        // Inject status into each responsibility within each assignment
+        $events->each(function($event) {
+            $event->assignments->each(function($assignment) {
+                if ($assignment->category && $assignment->category->responsibilities) {
+                    $checklist = $assignment->responsibility_checklist ?? [];
+                    // Ensure checklist keys are handled correctly (string vs int keys in JSON)
+                    foreach ($assignment->category->responsibilities as $resp) {
+                        $resp->status = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? 0);
+                    }
+                }
+            });
+        });
 
         return response()->json([
             'status' => 'success',
