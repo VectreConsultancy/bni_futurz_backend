@@ -29,6 +29,8 @@ class EventController extends Controller
             'name' => 'required|string|max:255',
             'date' => 'required|date',
             'description' => 'nullable|string',
+            'coordinator_ids' => 'required|array',
+            'coordinator_ids.*' => 'exists:master_coordinator_categories,id',
         ]);
 
         if ($validator->fails()) {
@@ -46,48 +48,44 @@ class EventController extends Controller
                 'created_ip' => $request->ip(),
             ]);
 
-            // Auto-assignment logic
-            $users = User::where('is_active', true)->get();
+            $requestedCoordIds = array_unique($request->coordinator_ids);
 
-            foreach ($users as $user) {
-                $categoryData = $user->category_id;
-                
-                if (is_array($categoryData)) {
-                    $categoryIds = $categoryData;
-                } elseif (is_string($categoryData) && str_contains($categoryData, ',')) {
-                    // Handle comma-separated strings if any legacy data exists
-                    $categoryIds = array_map('trim', explode(',', $categoryData));
-                } else {
-                    $categoryIds = $categoryData ? [$categoryData] : [];
+            foreach ($requestedCoordIds as $catId) {
+                $responsibilities = Responsibility::where('coordinator_id', $catId)
+                    ->where('level', 2)
+                    ->get();
+
+                if ($responsibilities->isEmpty()) {
+                    continue;
                 }
 
-                // Prevent duplicate processing if same ID appears twice in the array
-                $categoryIds = array_unique($categoryIds);
+                // Find users who have this category assigned
+                // We use whereJsonContains because category_id is stored as a JSON array in users table
+                $users = User::where('is_active', true)
+                    ->where(function ($query) use ($catId) {
+                        $query->whereJsonContains('category_id', (int)$catId)
+                              ->orWhereJsonContains('category_id', (string)$catId);
+                    })
+                    ->get();
 
-                foreach ($categoryIds as $catId) {
-                    // Fetch responsibilities for this category
-                    $responsibilities = Responsibility::where('coordinator_id', $catId)->where('level', 2)->get();
-
-                    if ($responsibilities->isNotEmpty()) {
-                        // Create responsibility checklist: { "id": 0, "id": 0 }
-                        $checklist = [];
-                        foreach ($responsibilities as $resp) {
-                            $checklist[$resp->id] = 0;
-                        }
-
-                        EventAssignment::updateOrCreate(
-                            [
-                                'event_id' => $event->id,
-                                'user_id' => $user->id,
-                                'category_id' => $catId,
-                            ],
-                            [
-                                'responsibility_checklist' => $checklist,
-                                'created_by' => auth()->id(),
-                                'created_ip' => $request->ip(),
-                            ]
-                        );
+                foreach ($users as $user) {
+                    $checklist = [];
+                    foreach ($responsibilities as $resp) {
+                        $checklist[$resp->id] = 0;
                     }
+
+                    EventAssignment::updateOrCreate(
+                        [
+                            'event_id' => $event->id,
+                            'user_id' => $user->id,
+                            'category_id' => $catId,
+                        ],
+                        [
+                            'responsibility_checklist' => $checklist,
+                            'created_by' => auth()->id(),
+                            'created_ip' => $request->ip(),
+                        ]
+                    );
                 }
             }
 
