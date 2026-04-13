@@ -20,7 +20,7 @@ Route::get('/user', function (Request $request) {
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
     Route::get('/coordinator-categories', [MasterDataController::class, 'getCategories']);
-
+    
     // Responsibility APIs
     Route::get('/responsibilities', [ResponsibilityController::class, 'index']);
     Route::post('/responsibilities', [ResponsibilityController::class, 'store']);
@@ -34,6 +34,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // User Assignment APIs (Admin)
     Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
+    Route::post('/user', [UserController::class, 'storeUser']);
+    Route::post('/user/{id}', [UserController::class, 'updateUser']);
 
     // User-Specific APIs (Auth Specific)
     Route::prefix('user')->group(function () {

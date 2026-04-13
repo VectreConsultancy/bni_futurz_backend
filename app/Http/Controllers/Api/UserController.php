@@ -214,4 +214,89 @@ class UserController extends Controller
             'data' => $assignment,
         ]);
     }
+
+    public function storeUser(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name'        => 'required|string|max:255',
+            'mobile_no'   => 'required|string|unique:users,mobile_no|max:15',
+            'category_id' => 'required|array',
+            'team_id'     => 'nullable|string|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user = User::create([
+                'name'        => $request->name,
+                'mobile_no'   => $request->mobile_no,
+                'category_id' => $request->category_id,
+                'team_id'     => $request->team_id,
+                'created_by'  => auth()->id(),
+                'ip_address'  => $request->ip(),
+                'is_active'   => true,
+            ]);
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'User created successfully.',
+                'data'    => $user
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Failed to create user: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updateUser(Request $request, $id)
+    {
+        $user = User::find($id);
+
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'User not found.'], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'name'        => 'sometimes|required|string|max:255',
+            'mobile_no'   => 'sometimes|required|string|max:15|unique:users,mobile_no,' . $id,
+            'category_id' => 'sometimes|required|array',
+            'team_id'     => 'sometimes|nullable|string|max:50',
+            'is_active'   => 'sometimes|required|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user->update($request->only(['name', 'mobile_no', 'category_id', 'team_id', 'is_active']));
+            
+            $user->updated_by = auth()->id();
+            $user->ip_address = $request->ip();
+            $user->save();
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'User updated successfully.',
+                'data'    => $user
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Failed to update user: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
