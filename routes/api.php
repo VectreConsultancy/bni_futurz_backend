@@ -33,16 +33,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/events', [EventController::class, 'index']);
     Route::post('/events', [EventController::class, 'store']);
 
-    // User Assignment APIs (Admin)
-    Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
-    Route::post('/user', [UserController::class, 'storeUser']);
-    Route::post('/user/{id}', [UserController::class, 'updateUser']);
-
     // User-Specific APIs (Auth Specific)
     Route::prefix('user')->group(function () {
         Route::get('/responsibilities/basic', [UserController::class, 'getMyBasicResponsibilities']);
         Route::get('/responsibilities/events', [UserController::class, 'getMyEventResponsibilities']);
         Route::post('update-basic-checklist', [UserController::class, 'updateBasicChecklist']);
         Route::post('update-checklist/{id}', [UserController::class, 'updateEventChecklist']);
-    }); 
+    });
+
+    // User Management APIs (Admin)
+    Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
+    Route::post('/user', [UserController::class, 'storeUser']);
+    Route::post('/user/{id}', [UserController::class, 'updateUser']);
 });
