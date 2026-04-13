@@ -221,6 +221,7 @@ class UserController extends Controller
             'name'        => 'required|string|max:255',
             'mobile_no'   => 'required|string|unique:users,mobile_no|max:15',
             'category_id' => 'required|array',
+            'role_id'     => 'nullable|exists:master_roles,role_id',
             'team_id'     => 'nullable|string|max:50',
         ]);
 
@@ -236,6 +237,7 @@ class UserController extends Controller
                 'name'        => $request->name,
                 'mobile_no'   => $request->mobile_no,
                 'category_id' => $request->category_id,
+                'role_id'     => $request->role_id,
                 'team_id'     => $request->team_id,
                 'created_by'  => auth()->id(),
                 'ip_address'  => $request->ip(),
@@ -268,6 +270,7 @@ class UserController extends Controller
             'name'        => 'sometimes|required|string|max:255',
             'mobile_no'   => 'sometimes|required|string|max:15|unique:users,mobile_no,' . $id,
             'category_id' => 'sometimes|required|array',
+            'role_id'     => 'sometimes|nullable|exists:master_roles,role_id',
             'team_id'     => 'sometimes|nullable|string|max:50',
             'is_active'   => 'sometimes|required|boolean',
         ]);
@@ -280,7 +283,7 @@ class UserController extends Controller
         }
 
         try {
-            $user->update($request->only(['name', 'mobile_no', 'category_id', 'team_id', 'is_active']));
+            $user->update($request->only(['name', 'mobile_no', 'category_id', 'role_id', 'team_id', 'is_active']));
             
             $user->updated_by = auth()->id();
             $user->ip_address = $request->ip();

@@ -124,4 +124,37 @@ class ResponsibilityController extends Controller
     //         'message' => 'Responsibility deleted successfully.',
     //     ]);
     // }
+
+    public function getMyRoleResponsibilities()
+    {
+        $user = auth()->user();
+
+        if (!$user || !$user->role_id) {
+            return response()->json([
+                'status' => 'success',
+                'data' => []
+            ]);
+        }
+
+        $responsibilities = Responsibility::where('role_id', $user->role_id)
+            ->get()
+            ->groupBy('period');
+
+        // Human-readable keys for periods
+        $periods = [
+            1 => 'weekly',
+            2 => 'monthly',
+            3 => 'as_and_when_required'
+        ];
+
+        $formatted = [];
+        foreach ($periods as $id => $name) {
+            $formatted[$name] = $responsibilities->get($id) ?? [];
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => (object)$formatted,
+        ]);
+    }
 }

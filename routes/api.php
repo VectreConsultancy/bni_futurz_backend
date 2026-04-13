@@ -27,6 +27,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/responsibilities/{id}', [ResponsibilityController::class, 'show']);
     Route::put('/responsibilities/{id}', [ResponsibilityController::class, 'update']);
     // Route::delete('/responsibilities/{id}', [ResponsibilityController::class, 'destroy']);
+    Route::get('/role-responsibilities', [ResponsibilityController::class, 'getMyRoleResponsibilities']);
 
     // Event APIs
     Route::get('/events', [EventController::class, 'index']);
