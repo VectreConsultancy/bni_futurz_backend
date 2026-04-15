@@ -21,7 +21,17 @@ class UserController extends Controller
                 $q->with(['event', 'category.responsibilities'])->orderBy('id', 'desc');
             }])
             ->where('is_active', true)
+            ->whereNotNull('category_id')
             ->get();
+
+        // Hydrate users with their human-readable category names
+        $categories = \App\Models\CoordinatorCategory::pluck('category_name', 'id');
+        $users->each(function ($user) use ($categories) {
+            $ids = $this->getUserCategoryIds($user); // Use helper for robustness
+            $user->category_names = collect($ids)->map(function ($id) use ($categories) {
+                return $categories[$id] ?? null;
+            })->filter()->values();
+        });
 
         return response()->json([
             'status' => 'success',
