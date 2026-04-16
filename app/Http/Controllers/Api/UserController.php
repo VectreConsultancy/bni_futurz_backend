@@ -14,6 +14,75 @@ use Illuminate\Support\Facades\Validator;
 
 class UserController extends Controller
 {
+    public function getCoordinatorProgress(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'start_date' => 'required|date',
+            'end_date'   => 'required|date|after_or_equal:start_date',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+        }
+
+        $startDate = \Carbon\Carbon::parse($request->start_date)->format('Y-m-d');
+        $endDate   = \Carbon\Carbon::parse($request->end_date)->format('Y-m-d');
+
+        $eventIds = Event::whereBetween('date', [$startDate, $endDate])->pluck('id');
+        $eventAssignments = EventAssignment::whereIn('event_id', $eventIds)->get();
+        $userIds = $eventAssignments->pluck('user_id')->unique();
+
+        $users = User::whereIn('id', $userIds)
+            ->select('id', 'name', 'category_id')
+            ->get()
+            ->keyBy('id');
+
+        $categories = CoordinatorCategory::pluck('category_name', 'id');
+        $report = [];
+
+        foreach ($users as $user) {
+            $userAssignments = $eventAssignments->where('user_id', $user->id);
+
+            $totalItems = 0;
+            $completed  = 0;
+
+            foreach ($userAssignments as $assignment) {
+                $checklist = $assignment->responsibility_checklist ?? [];
+                if (is_array($checklist)) {
+                    $totalItems += count($checklist);
+                    // $completed  += count(array_filter($checklist, fn($v) => (int)$v === 1));
+                    $completed += array_sum($checklist);
+                }
+            }
+
+            $percentage = $totalItems > 0 ? round(($completed / $totalItems) * 100, 1) : 0;
+
+            $catIds = $this->getUserCategoryIds($user);
+            $categoryNames = collect($catIds)->map(fn($id) => $categories[$id] ?? null)->filter()->values();
+
+            $report[] = [
+                'user_id'               => $user->id,
+                'user_name'             => $user->name,
+                'category_names'        => $categoryNames,
+                'total_events'          => $userAssignments->pluck('event_id')->unique()->count(),
+                'total_checklist_items' => $totalItems,
+                'completed'             => $completed,
+                'pending'               => $totalItems - $completed,
+                'completion_percentage' => $percentage,
+            ];
+        }
+
+        // Sort by completion percentage descending
+        usort($report, fn($a, $b) => $b['completion_percentage'] <=> $a['completion_percentage']);
+
+        return response()->json([
+            'status' => 'success',
+            'period' => ['start_date' => $startDate, 'end_date' => $endDate],
+            'total_events_in_range' => $eventIds->count(),
+            'data'   => $report,
+        ]);
+    }
+
     /**
      * Get all users with their event assignments (Admin view).
      */

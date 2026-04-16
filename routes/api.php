@@ -43,6 +43,7 @@ Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
 
     // User Management APIs (Admin)
     Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
+    Route::get('/coordinator-progress', [UserController::class, 'getCoordinatorProgress']);
     Route::post('/user', [UserController::class, 'storeUser']);
     Route::post('/user/{id}', [UserController::class, 'updateUser']);
     Route::post('/user/toggle-status/{id}', [UserController::class, 'toggleUserStatus']);
