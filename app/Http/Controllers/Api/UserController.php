@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Event;
 use App\Models\EventAssignment;
 use App\Models\BasicAssignment;
 use App\Models\Responsibility;
+use App\Models\CoordinatorCategory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -17,15 +19,21 @@ class UserController extends Controller
      */
     public function getUsersWithAssignments()
     {
-        $users = User::with(['eventAssignments' => function($q) {
-                $q->with(['event', 'category.responsibilities'])->orderBy('id', 'desc');
+            $users = User::with(['eventAssignments' => function($q) {
+                $q->with([
+                    'event:id,name,date,description,created_by', 
+                    'category:id,role_id,category_name', 
+                    'category.responsibilities:id,coordinator_id,role_id,name,level,period'
+                ])->orderBy('id', 'desc')
+                ->select('id', 'event_id', 'user_id', 'category_id', 'responsibility_checklist');
             }])
             ->where('is_active', true)
             ->whereNotNull('category_id')
+            ->select('id', 'name', 'email', 'mobile_no', 'category_id', 'team_id', 'role_id', 'is_active')
             ->get();
 
         // Hydrate users with their human-readable category names
-        $categories = \App\Models\CoordinatorCategory::pluck('category_name', 'id');
+        $categories = CoordinatorCategory::pluck('category_name', 'id');
         $users->each(function ($user) use ($categories) {
             $ids = $this->getUserCategoryIds($user); // Use helper for robustness
             $user->category_names = collect($ids)->map(function ($id) use ($categories) {
@@ -266,6 +274,28 @@ class UserController extends Controller
                 'message' => 'Failed to create user: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function toggleUserStatus($id)
+    {
+        $user = User::find($id);
+
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'User not found.'], 404);
+        }
+
+        $user->is_active = !$user->is_active;
+        $user->updated_by = auth()->id();
+        $user->ip_address = request()->ip();
+        $user->save();
+
+        $statusString = $user->is_active ? 'activated' : 'deactivated';
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => "User account has been successfully $statusString.",
+            'data'    => $user
+        ]);
     }
 
     public function updateUser(Request $request, $id)

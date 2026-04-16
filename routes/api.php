@@ -17,7 +17,7 @@ Route::get('/user', function (Request $request) {
 })->middleware('auth:sanctum');
 
 // Protected Routes
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
     Route::get('/coordinator-categories', [MasterDataController::class, 'getCategories']);
     
@@ -45,4 +45,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user-assignments', [UserController::class, 'getUsersWithAssignments']);
     Route::post('/user', [UserController::class, 'storeUser']);
     Route::post('/user/{id}', [UserController::class, 'updateUser']);
+    Route::post('/user/toggle-status/{id}', [UserController::class, 'toggleUserStatus']);
 });
