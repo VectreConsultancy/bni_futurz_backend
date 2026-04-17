@@ -42,7 +42,19 @@ class UserController extends Controller
             ->get()
             ->groupBy('team_id');
 
-        $userIds = $individualAssignments->pluck('user_id')->unique();
+        $individualUserIds = $individualAssignments->pluck('user_id');
+        $assignedTeamIds   = $teamAssignments->keys();
+
+        // Include users who are part of any team that has an assignment in this period
+        $teamUserIds = User::where(function($q) use ($assignedTeamIds) {
+            foreach ($assignedTeamIds as $tid) {
+                $q->orWhereJsonContains('team_id', (int)$tid)
+                  ->orWhereJsonContains('team_id', (string)$tid)
+                  ->orWhere('team_id', $tid);
+            }
+        })->pluck('id');
+
+        $userIds = $individualUserIds->merge($teamUserIds)->unique()->filter();
 
         $users = User::whereIn('id', $userIds)
             ->select('id', 'name', 'category_id', 'team_id')
@@ -96,11 +108,22 @@ class UserController extends Controller
             $catIds = $this->getUserCategoryIds($user);
             $categoryNames = collect($catIds)->map(fn($id) => $categories[$id] ?? null)->filter()->values();
 
+            // --- Correctly calculate total events (Individual + Team) ---
+            $individualEventIds = $userIndividualAssignments->pluck('event_id');
+            $teamEventIds = collect();
+            
+            if (!is_null($teamIdRaw) && $teamIdRaw !== '0' && $teamIdRaw !== '') {
+                foreach ($userTeamIds as $teamId) {
+                    $teamEventIds = $teamEventIds->concat($teamAssignments->get($teamId, collect())->pluck('event_id'));
+                }
+            }
+            $allParticipatedEventIds = $individualEventIds->concat($teamEventIds)->unique();
+
             $report[] = [
                 'user_id'               => $user->id,
                 'user_name'             => $user->name,
                 'category_names'        => $categoryNames,
-                'total_events'          => $userIndividualAssignments->pluck('event_id')->unique()->count(),
+                'total_events'          => $allParticipatedEventIds->count(),
                 'total_checklist_items' => $totalItems,
                 'completed'             => $completed,
                 'pending'               => $totalItems - $completed,
