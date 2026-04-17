@@ -266,17 +266,8 @@ class UserController extends Controller
             ->get();
 
         $individualAssignments->each(function($assignment) {
-            $assignment->is_team = false;
+            $assignment->is_team   = false;
             $assignment->team_name = null;
-            $checklist = $assignment->responsibility_checklist ?? [];
-            if ($assignment->category && $assignment->category->responsibilities) {
-                foreach ($assignment->category->responsibilities as $resp) {
-                    // Normalise: individual format is simple int (0/1)
-                    $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? 0);
-                    $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                    $resp->checked_by = null;
-                }
-            }
         });
 
         // --- 2. Team assignments (team_id match) ---
@@ -300,47 +291,56 @@ class UserController extends Controller
             $teamAssignments->each(function($assignment) use ($teams) {
                 $assignment->is_team   = true;
                 $assignment->team_name = $teams[$assignment->team_id] ?? null;
-                $checklist = $assignment->responsibility_checklist ?? [];
-                if ($assignment->category && $assignment->category->responsibilities) {
-                    foreach ($assignment->category->responsibilities as $resp) {
-                        $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? []);
-                        $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                        $resp->checked_by = is_array($val) ? ($val['checked_by'] ?? null) : null;
-                    }
-                }
             });
         }
 
-        // --- 3. Unified Merge & Enrichment (Replace IDs with Names) ---
         $merged = $individualAssignments->merge($teamAssignments);
 
-        // Collect all user IDs who have checked something
+        // --- 3. Collect checker IDs from raw checklist data (avoids key-type mismatch) ---
         $checkerIds = [];
         foreach ($merged as $assignment) {
-            if ($assignment->category && $assignment->category->responsibilities) {
-                foreach ($assignment->category->responsibilities as $resp) {
-                    // For individual assignments, check if the task is done (status 1)
-                    if (!$assignment->is_team && (int)$resp->status === 1) {
-                         $resp->checked_by = $assignment->user_id; // The user assigned to this individual row
+            $checklist = $assignment->responsibility_checklist ?? [];
+            if ($assignment->is_team) {
+                // Team format: {"resp_id": {"status": 0/1, "checked_by": user_id|null}}
+                foreach ($checklist as $val) {
+                    if (is_array($val) && !empty($val['checked_by'])) {
+                        $checkerIds[] = (int)$val['checked_by'];
                     }
-                    if ($resp->checked_by && is_numeric($resp->checked_by)) {
-                        $checkerIds[] = (int)$resp->checked_by;
-                    }
+                }
+            } else {
+                // Individual: checker is the assigned user themselves (if any task is done)
+                if (!is_null($assignment->user_id)) {
+                    $checkerIds[] = (int)$assignment->user_id;
                 }
             }
         }
-        $checkerIds = array_unique($checkerIds);
-        $checkerNames = User::whereIn('id', $checkerIds)->pluck('name', 'id');
 
-        // Map IDs to Names in the response
+        // Single DB call — keys cast to int to prevent int/string mismatch
+        $checkerNames = User::whereIn('id', array_unique($checkerIds))
+            ->pluck('name', 'id')
+            ->mapWithKeys(fn($name, $id) => [(int)$id => $name]);
+
+        // --- 4. Enrich responsibilities with status + resolved name in one pass ---
         foreach ($merged as $assignment) {
-            if ($assignment->category && $assignment->category->responsibilities) {
-                foreach ($assignment->category->responsibilities as $resp) {
-                    if ($resp->checked_by && isset($checkerNames[$resp->checked_by])) {
-                        $resp->checked_by = $checkerNames[$resp->checked_by];
-                    } else {
-                        $resp->checked_by = null;
-                    }
+            if (!$assignment->category || !$assignment->category->responsibilities) continue;
+
+            $checklist = $assignment->responsibility_checklist ?? [];
+            $isTeam    = $assignment->is_team;
+
+            foreach ($assignment->category->responsibilities as $resp) {
+                $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
+
+                if ($isTeam) {
+                    $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                    $rawCheckerId     = is_array($val) ? ($val['checked_by'] ?? null) : null;
+                    $resp->status     = $rawStatus;
+                    $resp->checked_by = $rawCheckerId ? ($checkerNames[(int)$rawCheckerId] ?? null) : null;
+                } else {
+                    $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                    $resp->status     = $rawStatus;
+                    $resp->checked_by = $rawStatus === 1
+                        ? ($checkerNames[(int)$assignment->user_id] ?? null)
+                        : null;
                 }
             }
         }
