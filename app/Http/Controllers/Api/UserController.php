@@ -97,7 +97,7 @@ class UserController extends Controller
                 ])->orderBy('id', 'desc')
                 ->select('id', 'event_id', 'user_id', 'category_id', 'responsibility_checklist');
             }])
-            ->where('is_active', true)
+            // ->where('is_active', true)
             ->whereNotNull('category_id')
             ->select('id', 'name', 'email', 'mobile_no', 'category_id', 'team_id', 'role_id', 'is_active')
             ->get();
