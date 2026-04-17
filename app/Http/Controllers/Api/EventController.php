@@ -19,50 +19,50 @@ class EventController extends Controller
             $q->where('level', 2);
         }])->get();
 
-        // Step 1: Inject status & raw checked_by (ID) into each responsibility
-        $events->each(function($event) {
-            $event->assignments->each(function($assignment) {
-                if ($assignment->category && $assignment->category->responsibilities) {
-                    $checklist = $assignment->responsibility_checklist ?? [];
-                    $isTeam = !is_null($assignment->team_id);
-                    foreach ($assignment->category->responsibilities as $resp) {
-                        $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
-                        if ($isTeam) {
-                            $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                            $resp->checked_by = is_array($val) ? ($val['checked_by'] ?? null) : null;
-                        } else {
-                            $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                            $resp->checked_by = $resp->status === 1 ? $assignment->user_id : null;
-                        }
-                    }
-                }
-            });
-        });
-
-        // Step 2: Collect all unique checker IDs for a single batch name lookup
+        // Step 1: Collect all checker IDs directly from raw checklist data
         $checkerIds = [];
         foreach ($events as $event) {
             foreach ($event->assignments as $assignment) {
-                if ($assignment->category && $assignment->category->responsibilities) {
-                    foreach ($assignment->category->responsibilities as $resp) {
-                        if (!empty($resp->checked_by) && is_numeric($resp->checked_by)) {
-                            $checkerIds[] = (int)$resp->checked_by;
+                $checklist = $assignment->responsibility_checklist ?? [];
+                $isTeam    = !is_null($assignment->team_id);
+                if ($isTeam && is_array($checklist)) {
+                    foreach ($checklist as $val) {
+                        if (is_array($val) && !empty($val['checked_by'])) {
+                            $checkerIds[] = (int)$val['checked_by'];
                         }
+                    }
+                } elseif (!$isTeam) {
+                    // For individual: the checker is the assigned user if any task is done
+                    if (!is_null($assignment->user_id)) {
+                        $checkerIds[] = (int)$assignment->user_id;
                     }
                 }
             }
         }
-        $checkerNames = User::whereIn('id', array_unique($checkerIds))->pluck('name', 'id');
+        // Single DB call — cast key to int explicitly
+        $checkerNames = User::whereIn('id', array_unique($checkerIds))
+            ->pluck('name', 'id')
+            ->mapWithKeys(fn($name, $id) => [(int)$id => $name]);
 
-        // Step 3: Replace IDs with Names
+        // Step 2: Inject status & resolved name into each responsibility
         $events->each(function($event) use ($checkerNames) {
             $event->assignments->each(function($assignment) use ($checkerNames) {
                 if ($assignment->category && $assignment->category->responsibilities) {
+                    $checklist = $assignment->responsibility_checklist ?? [];
+                    $isTeam    = !is_null($assignment->team_id);
                     foreach ($assignment->category->responsibilities as $resp) {
-                        if (!empty($resp->checked_by) && isset($checkerNames[$resp->checked_by])) {
-                            $resp->checked_by = $checkerNames[$resp->checked_by];
+                        $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
+                        if ($isTeam) {
+                            $rawStatus       = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                            $rawCheckerId    = is_array($val) ? ($val['checked_by'] ?? null) : null;
+                            $resp->status    = $rawStatus;
+                            $resp->checked_by = $rawCheckerId ? ($checkerNames[(int)$rawCheckerId] ?? null) : null;
                         } else {
-                            $resp->checked_by = null;
+                            $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                            $resp->status     = $rawStatus;
+                            $resp->checked_by = $rawStatus === 1
+                                ? ($checkerNames[(int)$assignment->user_id] ?? null)
+                                : null;
                         }
                     }
                 }
