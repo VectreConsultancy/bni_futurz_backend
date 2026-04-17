@@ -30,11 +30,22 @@ class UserController extends Controller
         $endDate   = \Carbon\Carbon::parse($request->end_date)->format('Y-m-d');
 
         $eventIds = Event::whereBetween('date', [$startDate, $endDate])->pluck('id');
-        $eventAssignments = EventAssignment::whereIn('event_id', $eventIds)->get();
-        $userIds = $eventAssignments->pluck('user_id')->unique();
+
+        // Individual assignments (user_id is set)
+        $individualAssignments = EventAssignment::whereIn('event_id', $eventIds)
+            ->whereNotNull('user_id')
+            ->get();
+
+        // Team assignments (team_id is set)
+        $teamAssignments = EventAssignment::whereIn('event_id', $eventIds)
+            ->whereNotNull('team_id')
+            ->get()
+            ->groupBy('team_id');
+
+        $userIds = $individualAssignments->pluck('user_id')->unique();
 
         $users = User::whereIn('id', $userIds)
-            ->select('id', 'name', 'category_id')
+            ->select('id', 'name', 'category_id', 'team_id')
             ->get()
             ->keyBy('id');
 
@@ -42,17 +53,41 @@ class UserController extends Controller
         $report = [];
 
         foreach ($users as $user) {
-            $userAssignments = $eventAssignments->where('user_id', $user->id);
+            $userIndividualAssignments = $individualAssignments->where('user_id', $user->id);
 
             $totalItems = 0;
             $completed  = 0;
 
-            foreach ($userAssignments as $assignment) {
+            // --- Individual checklist items ---
+            foreach ($userIndividualAssignments as $assignment) {
                 $checklist = $assignment->responsibility_checklist ?? [];
                 if (is_array($checklist)) {
-                    $totalItems += count($checklist);
-                    // $completed  += count(array_filter($checklist, fn($v) => (int)$v === 1));
-                    $completed += array_sum($checklist);
+                    foreach ($checklist as $val) {
+                        $totalItems++;
+                        $completed += (int)$val === 1 ? 1 : 0;
+                    }
+                }
+            }
+
+            // --- Team checklist items ---
+            $teamIdRaw = $user->team_id;
+            if (!is_null($teamIdRaw) && $teamIdRaw !== '0' && $teamIdRaw !== '') {
+                $userTeamIds = (is_string($teamIdRaw) && str_starts_with($teamIdRaw, '['))
+                    ? json_decode($teamIdRaw, true)
+                    : [(int)$teamIdRaw];
+
+                foreach ($userTeamIds as $teamId) {
+                    $teamRows = $teamAssignments->get($teamId, collect());
+                    foreach ($teamRows as $assignment) {
+                        $checklist = $assignment->responsibility_checklist ?? [];
+                        if (is_array($checklist)) {
+                            foreach ($checklist as $val) {
+                                $totalItems++;
+                                $status = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                                $completed += $status === 1 ? 1 : 0;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -65,7 +100,7 @@ class UserController extends Controller
                 'user_id'               => $user->id,
                 'user_name'             => $user->name,
                 'category_names'        => $categoryNames,
-                'total_events'          => $userAssignments->pluck('event_id')->unique()->count(),
+                'total_events'          => $userIndividualAssignments->pluck('event_id')->unique()->count(),
                 'total_checklist_items' => $totalItems,
                 'completed'             => $completed,
                 'pending'               => $totalItems - $completed,
@@ -268,7 +303,6 @@ class UserController extends Controller
                 $checklist = $assignment->responsibility_checklist ?? [];
                 if ($assignment->category && $assignment->category->responsibilities) {
                     foreach ($assignment->category->responsibilities as $resp) {
-                        // Team format: {"status": 0/1, "checked_by": user_id|null}
                         $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? []);
                         $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
                         $resp->checked_by = is_array($val) ? ($val['checked_by'] ?? null) : null;
