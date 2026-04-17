@@ -72,7 +72,7 @@ class EventController extends Controller
                 ->keyBy('category_id');
 
             foreach ($requestedCoordIds as $catId) {
-                // Get Level 2 responsibilities (even if empty)
+                // Get Level 2 responsibilities
                 $responsibilities = Responsibility::where('coordinator_id', $catId)
                     ->where('level', 2)
                     ->get();
@@ -87,28 +87,30 @@ class EventController extends Controller
                         $checklist[$resp->id] = ['status' => 0, 'checked_by' => null];
                     }
 
-                    EventAssignment::updateOrCreate(
-                        [
-                            'event_id'    => $event->id,
-                            'team_id'     => $team->id,
-                            'category_id' => $catId,
-                        ],
-                        [
-                            'user_id'                 => null, // No specific user for team rows
-                            'responsibility_checklist'=> $checklist,
-                            'created_by'              => auth()->id(),
-                            'created_ip'              => $request->ip(),
-                        ]
-                    );
+                    // Only insert if tasks exist for this category
+                    if (!empty($checklist)) {
+                        EventAssignment::updateOrCreate(
+                            [
+                                'event_id'    => $event->id,
+                                'team_id'     => $team->id,
+                                'category_id' => $catId,
+                            ],
+                            [
+                                'user_id'                 => null, 
+                                'responsibility_checklist'=> $checklist,
+                                'created_by'              => auth()->id(),
+                                'created_ip'              => $request->ip(),
+                            ]
+                        );
+                    }
                 } else {
                     // --- INDIVIDUAL: one row per user ---
-                    // Fixed: support both JSON array and simple string/int values
+                    // Better query for JSON category_id
                     $users = User::where('is_active', true)
                         ->where(function ($query) use ($catId) {
-                            $query->where('category_id', (string)$catId)
-                                  ->orWhere('category_id', (int)$catId)
-                                  ->orWhereJsonContains('category_id', (int)$catId)
-                                  ->orWhereJsonContains('category_id', (string)$catId);
+                            $query->whereJsonContains('category_id', (int)$catId)
+                                  ->orWhereJsonContains('category_id', (string)$catId)
+                                  ->orWhere('category_id', $catId);
                         })
                         ->get();
 
@@ -118,19 +120,22 @@ class EventController extends Controller
                             $checklist[$resp->id] = 0;
                         }
 
-                        EventAssignment::updateOrCreate(
-                            [
-                                'event_id'    => $event->id,
-                                'user_id'     => $user->id,
-                                'category_id' => $catId,
-                            ],
-                            [
-                                'team_id'                 => null,
-                                'responsibility_checklist'=> $checklist,
-                                'created_by'              => auth()->id(),
-                                'created_ip'              => $request->ip(),
-                            ]
-                        );
+                        // Only insert if tasks exist for this category
+                        if (!empty($checklist)) {
+                            EventAssignment::updateOrCreate(
+                                [
+                                    'event_id'    => $event->id,
+                                    'user_id'     => $user->id,
+                                    'category_id' => $catId,
+                                ],
+                                [
+                                    'team_id'                 => null,
+                                    'responsibility_checklist'=> $checklist,
+                                    'created_by'              => auth()->id(),
+                                    'created_ip'              => $request->ip(),
+                                ]
+                            );
+                        }
                     }
                 }
             }

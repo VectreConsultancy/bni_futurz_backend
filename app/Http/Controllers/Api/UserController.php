@@ -277,9 +277,43 @@ class UserController extends Controller
             });
         }
 
+        // --- 3. Unified Merge & Enrichment (Replace IDs with Names) ---
+        $merged = $individualAssignments->merge($teamAssignments);
+
+        // Collect all user IDs who have checked something
+        $checkerIds = [];
+        foreach ($merged as $assignment) {
+            if ($assignment->category && $assignment->category->responsibilities) {
+                foreach ($assignment->category->responsibilities as $resp) {
+                    // For individual assignments, check if the task is done (status 1)
+                    if (!$assignment->is_team && (int)$resp->status === 1) {
+                         $resp->checked_by = $assignment->user_id; // The user assigned to this individual row
+                    }
+                    if ($resp->checked_by && is_numeric($resp->checked_by)) {
+                        $checkerIds[] = (int)$resp->checked_by;
+                    }
+                }
+            }
+        }
+        $checkerIds = array_unique($checkerIds);
+        $checkerNames = User::whereIn('id', $checkerIds)->pluck('name', 'id');
+
+        // Map IDs to Names in the response
+        foreach ($merged as $assignment) {
+            if ($assignment->category && $assignment->category->responsibilities) {
+                foreach ($assignment->category->responsibilities as $resp) {
+                    if ($resp->checked_by && isset($checkerNames[$resp->checked_by])) {
+                        $resp->checked_by = $checkerNames[$resp->checked_by];
+                    } else {
+                        $resp->checked_by = null;
+                    }
+                }
+            }
+        }
+
         return response()->json([
             'status' => 'success',
-            'data'   => $individualAssignments->merge($teamAssignments)->sortByDesc('id')->values(),
+            'data'   => $merged->sortByDesc('id')->values(),
         ]);
     }
 
