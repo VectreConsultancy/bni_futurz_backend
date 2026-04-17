@@ -9,7 +9,7 @@ class EventAssignment extends Model
     protected $table = 'tbl_event_assignments';
 
     protected $fillable = [
-        'event_id', 'user_id', 'category_id', 'responsibility_checklist', 
+        'event_id', 'user_id', 'category_id', 'team_id', 'responsibility_checklist', 
         'created_by', 'updated_by', 'created_ip', 'updated_ip'
     ];
 

@@ -41,11 +41,11 @@ class EventController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'date' => 'required|date',
-            'description' => 'nullable|string',
-            'coordinator_ids' => 'required|array',
-            'coordinator_ids.*' => 'exists:master_coordinator_categories,id',
+            'name'             => 'required|string|max:255',
+            'date'             => 'required|date',
+            'description'      => 'nullable|string',
+            'coordinator_ids'  => 'required|array',
+            'coordinator_ids.*'=> 'exists:master_coordinator_categories,id',
         ]);
 
         if ($validator->fails()) {
@@ -56,60 +56,89 @@ class EventController extends Controller
             DB::beginTransaction();
 
             $event = Event::create([
-                'name' => $request->name,
-                'date' => $request->date,
-                'description' => $request->description,
+                'name'       => $request->name,
+                'date'       => $request->date,
+                'description'=> $request->description,
                 'created_by' => auth()->id(),
                 'created_ip' => $request->ip(),
             ]);
 
             $requestedCoordIds = array_unique($request->coordinator_ids);
 
+            // Load all teams keyed by their category_id for fast lookup
+            $teamsByCategoryId = DB::table('master_teams')
+                ->whereIn('category_id', $requestedCoordIds)
+                ->get()
+                ->keyBy('category_id');
+
             foreach ($requestedCoordIds as $catId) {
                 $responsibilities = Responsibility::where('coordinator_id', $catId)
                     ->where('level', 2)
                     ->get();
 
-                if ($responsibilities->isEmpty()) {
-                    continue;
-                }
+                if ($responsibilities->isEmpty()) continue;
 
-                // Find users who have this category assigned
-                // We use whereJsonContains because category_id is stored as a JSON array in users table
-                $users = User::where('is_active', true)
-                    ->where(function ($query) use ($catId) {
-                        $query->whereJsonContains('category_id', (int)$catId)
-                              ->orWhereJsonContains('category_id', (string)$catId);
-                    })
-                    ->get();
+                // Check if this category belongs to a team
+                $team = $teamsByCategoryId[$catId] ?? null;
 
-                foreach ($users as $user) {
+                if ($team) {
+                    // --- TEAM-BASED: ONE shared row with enriched JSON ---
                     $checklist = [];
                     foreach ($responsibilities as $resp) {
-                        $checklist[$resp->id] = 0;
+                        $checklist[$resp->id] = ['status' => 0, 'checked_by' => null];
                     }
 
                     EventAssignment::updateOrCreate(
                         [
-                            'event_id' => $event->id,
-                            'user_id' => $user->id,
+                            'event_id'    => $event->id,
+                            'team_id'     => $team->id,
                             'category_id' => $catId,
                         ],
                         [
-                            'responsibility_checklist' => $checklist,
-                            'created_by' => auth()->id(),
-                            'created_ip' => $request->ip(),
+                            'user_id'                 => null, // No specific user for team rows
+                            'responsibility_checklist'=> $checklist,
+                            'created_by'              => auth()->id(),
+                            'created_ip'              => $request->ip(),
                         ]
                     );
+                } else {
+                    // --- INDIVIDUAL: one row per user (existing behaviour) ---
+                    $users = User::where('is_active', true)
+                        ->where(function ($query) use ($catId) {
+                            $query->whereJsonContains('category_id', (int)$catId)
+                                  ->orWhereJsonContains('category_id', (string)$catId);
+                        })
+                        ->get();
+
+                    foreach ($users as $user) {
+                        $checklist = [];
+                        foreach ($responsibilities as $resp) {
+                            $checklist[$resp->id] = 0;
+                        }
+
+                        EventAssignment::updateOrCreate(
+                            [
+                                'event_id'    => $event->id,
+                                'user_id'     => $user->id,
+                                'category_id' => $catId,
+                            ],
+                            [
+                                'team_id'                 => null,
+                                'responsibility_checklist'=> $checklist,
+                                'created_by'              => auth()->id(),
+                                'created_ip'              => $request->ip(),
+                            ]
+                        );
+                    }
                 }
             }
 
             DB::commit();
 
             return response()->json([
-                'status' => 'success',
+                'status'  => 'success',
                 'message' => 'Event created and assignments auto-populated successfully.',
-                'data' => $event->load('assignments'),
+                'data'    => $event->load('assignments'),
             ], 201);
 
         } catch (\Exception $e) {

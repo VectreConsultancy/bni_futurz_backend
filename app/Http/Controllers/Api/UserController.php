@@ -10,6 +10,7 @@ use App\Models\BasicAssignment;
 use App\Models\Responsibility;
 use App\Models\CoordinatorCategory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class UserController extends Controller
@@ -211,36 +212,74 @@ class UserController extends Controller
     }
 
     /**
-     * Get the authenticated user's Event-wise responsibilities (Level 2).
+     * Get the authenticated user's Event-wise responsibilities (Level 2) —
+     * includes both individual and team-shared assignments in one unified response.
      */
     public function getMyEventResponsibilities()
     {
         $user = auth()->user();
-
         if (!$user) {
             return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
         }
 
-        $assignments = $user->eventAssignments()
-            ->with(['event', 'category.responsibilities' => function($q) {
+        // --- 1. Individual assignments (user_id match) ---
+        $individualAssignments = $user->eventAssignments()
+            ->with(['event:id,name,date', 'category.responsibilities' => function($q) {
                 $q->where('level', 2);
             }])
             ->orderBy('id', 'desc')
             ->get();
 
-        // Map status into each nested responsibility
-        $assignments->each(function($assignment) {
+        $individualAssignments->each(function($assignment) {
+            $assignment->is_team = false;
+            $assignment->team_name = null;
             $checklist = $assignment->responsibility_checklist ?? [];
             if ($assignment->category && $assignment->category->responsibilities) {
                 foreach ($assignment->category->responsibilities as $resp) {
-                    $resp->status = $checklist[$resp->id] ?? 0;
+                    // Normalise: individual format is simple int (0/1)
+                    $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? 0);
+                    $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                    $resp->checked_by = null;
                 }
             }
         });
 
+        // --- 2. Team assignments (team_id match) ---
+        $teamIdRaw = $user->team_id;
+        $teamAssignments = collect();
+
+        if (!is_null($teamIdRaw) && $teamIdRaw !== '0' && $teamIdRaw !== '') {
+            $teamIds = (is_string($teamIdRaw) && str_starts_with($teamIdRaw, '['))
+                ? json_decode($teamIdRaw, true)
+                : [(int)$teamIdRaw];
+
+            $teams = DB::table('master_teams')->whereIn('id', $teamIds)->pluck('team_name', 'id');
+
+            $teamAssignments = EventAssignment::whereIn('team_id', $teamIds)
+                ->with(['event:id,name,date', 'category.responsibilities' => function($q) {
+                    $q->where('level', 2);
+                }])
+                ->orderBy('id', 'desc')
+                ->get();
+
+            $teamAssignments->each(function($assignment) use ($teams) {
+                $assignment->is_team   = true;
+                $assignment->team_name = $teams[$assignment->team_id] ?? null;
+                $checklist = $assignment->responsibility_checklist ?? [];
+                if ($assignment->category && $assignment->category->responsibilities) {
+                    foreach ($assignment->category->responsibilities as $resp) {
+                        // Team format: {"status": 0/1, "checked_by": user_id|null}
+                        $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? []);
+                        $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                        $resp->checked_by = is_array($val) ? ($val['checked_by'] ?? null) : null;
+                    }
+                }
+            });
+        }
+
         return response()->json([
             'status' => 'success',
-            'data' => $assignments,
+            'data'   => $individualAssignments->merge($teamAssignments)->sortByDesc('id')->values(),
         ]);
     }
 
@@ -275,7 +314,45 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Assignment not found.'], 404);
         }
 
-        if ($assignment->user_id !== auth()->id()) {
+        $user = auth()->user();
+
+        // --- TEAM assignment: validate membership, store enriched JSON ---
+        if (!is_null($assignment->team_id)) {
+            $teamIdRaw   = $user->team_id;
+            $userTeamIds = (is_string($teamIdRaw) && str_starts_with($teamIdRaw, '['))
+                ? array_map('intval', json_decode($teamIdRaw, true))
+                : [(int)$teamIdRaw];
+
+            if (!in_array((int)$assignment->team_id, $userTeamIds)) {
+                return response()->json(['status' => 'error', 'message' => 'You are not a member of this team.'], 403);
+            }
+
+            $currentChecklist = $assignment->responsibility_checklist ?? [];
+            $updatedCount = 0;
+            foreach ($request->checklist as $respId => $status) {
+                if (array_key_exists((string)$respId, $currentChecklist) || array_key_exists($respId, $currentChecklist)) {
+                    $currentChecklist[$respId] = [
+                        'status'     => (int)$status,
+                        'checked_by' => (int)$status === 1 ? $user->id : null,
+                    ];
+                    $updatedCount++;
+                }
+            }
+
+            $assignment->responsibility_checklist = $currentChecklist;
+            $assignment->updated_by = $user->id;
+            $assignment->updated_ip = $request->ip();
+            $assignment->save();
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => "Updated $updatedCount team checklist item(s).",
+                'data'    => $assignment,
+            ]);
+        }
+
+        // --- INDIVIDUAL assignment: original logic ---
+        if ($assignment->user_id !== $user->id) {
             return response()->json(['status' => 'error', 'message' => 'Unauthorized access to this assignment.'], 403);
         }
 
