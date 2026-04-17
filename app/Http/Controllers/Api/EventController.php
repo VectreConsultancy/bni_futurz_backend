@@ -19,14 +19,51 @@ class EventController extends Controller
             $q->where('level', 2);
         }])->get();
 
-        // Inject status into each responsibility within each assignment
+        // Step 1: Inject status & raw checked_by (ID) into each responsibility
         $events->each(function($event) {
             $event->assignments->each(function($assignment) {
                 if ($assignment->category && $assignment->category->responsibilities) {
                     $checklist = $assignment->responsibility_checklist ?? [];
-                    // Ensure checklist keys are handled correctly (string vs int keys in JSON)
+                    $isTeam = !is_null($assignment->team_id);
                     foreach ($assignment->category->responsibilities as $resp) {
-                        $resp->status = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? 0);
+                        $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
+                        if ($isTeam) {
+                            $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                            $resp->checked_by = is_array($val) ? ($val['checked_by'] ?? null) : null;
+                        } else {
+                            $resp->status     = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                            $resp->checked_by = $resp->status === 1 ? $assignment->user_id : null;
+                        }
+                    }
+                }
+            });
+        });
+
+        // Step 2: Collect all unique checker IDs for a single batch name lookup
+        $checkerIds = [];
+        foreach ($events as $event) {
+            foreach ($event->assignments as $assignment) {
+                if ($assignment->category && $assignment->category->responsibilities) {
+                    foreach ($assignment->category->responsibilities as $resp) {
+                        if (!empty($resp->checked_by) && is_numeric($resp->checked_by)) {
+                            $checkerIds[] = (int)$resp->checked_by;
+                        }
+                    }
+                }
+            }
+        }
+        $checkerNames = User::whereIn('id', array_unique($checkerIds))->pluck('name', 'id');
+
+        // Step 3: Replace IDs with Names
+        $events->each(function($event) use ($checkerNames) {
+            $event->assignments->each(function($assignment) use ($checkerNames) {
+                if ($assignment->category && $assignment->category->responsibilities) {
+                    foreach ($assignment->category->responsibilities as $resp) {
+                        if (!empty($resp->checked_by) && isset($checkerNames[$resp->checked_by])) {
+                            $resp->checked_by = $checkerNames[$resp->checked_by];
+                        } else {
+                            $resp->checked_by = null;
+                        }
                     }
                 }
             });
