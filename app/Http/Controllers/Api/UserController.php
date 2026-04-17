@@ -322,27 +322,36 @@ class UserController extends Controller
 
         // --- 4. Enrich responsibilities with status + resolved name in one pass ---
         foreach ($merged as $assignment) {
-            if (!$assignment->category || !$assignment->category->responsibilities) continue;
+            if (!$assignment->category) continue;
 
-            $checklist = $assignment->responsibility_checklist ?? [];
-            $isTeam    = $assignment->is_team;
+            // Clone the category and its responsibilities to prevent shared reference overwriting
+            $clonedCategory = clone $assignment->category;
+            
+            if ($clonedCategory->responsibilities) {
+                $clonedResps = $clonedCategory->responsibilities->map(fn($r) => clone $r);
+                
+                $checklist = $assignment->responsibility_checklist ?? [];
+                $isTeam    = $assignment->is_team;
 
-            foreach ($assignment->category->responsibilities as $resp) {
-                $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
+                foreach ($clonedResps as $resp) {
+                    $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
 
-                if ($isTeam) {
-                    $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                    $rawCheckerId     = is_array($val) ? ($val['checked_by'] ?? null) : null;
-                    $resp->status     = $rawStatus;
-                    $resp->checked_by = $rawCheckerId ? ($checkerNames[(int)$rawCheckerId] ?? null) : null;
-                } else {
-                    $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
-                    $resp->status     = $rawStatus;
-                    $resp->checked_by = $rawStatus === 1
-                        ? ($checkerNames[(int)$assignment->user_id] ?? null)
-                        : null;
+                    if ($isTeam) {
+                        $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                        $rawCheckerId     = is_array($val) ? ($val['checked_by'] ?? null) : null;
+                        $resp->status     = $rawStatus;
+                        $resp->checked_by = $rawCheckerId ? ($checkerNames[(int)$rawCheckerId] ?? null) : null;
+                    } else {
+                        $rawStatus        = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                        $resp->status     = $rawStatus;
+                        $resp->checked_by = $rawStatus === 1
+                            ? ($checkerNames[(int)$assignment->user_id] ?? null)
+                            : null;
+                    }
                 }
+                $clonedCategory->setRelation('responsibilities', $clonedResps);
             }
+            $assignment->setRelation('category', $clonedCategory);
         }
 
         return response()->json([
