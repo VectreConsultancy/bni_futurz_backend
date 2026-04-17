@@ -72,11 +72,10 @@ class EventController extends Controller
                 ->keyBy('category_id');
 
             foreach ($requestedCoordIds as $catId) {
+                // Get Level 2 responsibilities (even if empty)
                 $responsibilities = Responsibility::where('coordinator_id', $catId)
                     ->where('level', 2)
                     ->get();
-
-                if ($responsibilities->isEmpty()) continue;
 
                 // Check if this category belongs to a team
                 $team = $teamsByCategoryId[$catId] ?? null;
@@ -102,10 +101,13 @@ class EventController extends Controller
                         ]
                     );
                 } else {
-                    // --- INDIVIDUAL: one row per user (existing behaviour) ---
+                    // --- INDIVIDUAL: one row per user ---
+                    // Fixed: support both JSON array and simple string/int values
                     $users = User::where('is_active', true)
                         ->where(function ($query) use ($catId) {
-                            $query->whereJsonContains('category_id', (int)$catId)
+                            $query->where('category_id', (string)$catId)
+                                  ->orWhere('category_id', (int)$catId)
+                                  ->orWhereJsonContains('category_id', (int)$catId)
                                   ->orWhereJsonContains('category_id', (string)$catId);
                         })
                         ->get();
