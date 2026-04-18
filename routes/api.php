@@ -32,6 +32,8 @@ Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
     // Event APIs
     Route::get('/events', [EventController::class, 'index']);
     Route::post('/events', [EventController::class, 'store']);
+    Route::get('/tenures', [EventController::class, 'getTenures']);
+    Route::post('/tenures', [EventController::class, 'storeTenure']);
 
     // User-Specific APIs (Auth Specific)
     Route::prefix('user')->group(function () {

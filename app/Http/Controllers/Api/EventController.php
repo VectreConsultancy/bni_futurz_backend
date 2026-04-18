@@ -7,6 +7,7 @@ use App\Models\Event;
 use App\Models\EventAssignment;
 use App\Models\User;
 use App\Models\Responsibility;
+use App\Models\Tenure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -198,5 +199,39 @@ class EventController extends Controller
             DB::rollBack();
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
         }
+    }
+
+    public function storeTenure(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'year'   => 'required|string',
+            'tenure' => 'required|in:APR-SEP,OCT-MAR',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+        }
+
+        $tenure = Tenure::create([
+            'year'       => $request->year,
+            'tenure'     => $request->tenure,
+            'created_by' => auth()->id(),
+            'created_ip' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => 'Tenure created successfully.',
+            'data'    => $tenure,
+        ], 201);
+    }
+
+    public function getTenures()
+    {
+        $tenures = Tenure::orderBy('id', 'desc')->get();
+        return response()->json([
+            'status' => 'success',
+            'data'   => $tenures,
+        ]);
     }
 }
