@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 
 use App\Models\User;
 use App\Models\OtpVerification;
+use App\Helpers\OtpHelper;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -32,22 +33,23 @@ class AuthController extends Controller
             return response()->json(['message' => 'User not found with this mobile number.'], 404);
         }
 
-        $otp = 654321; //rand(100000, 999999);
-        
-        // Only insert, don't update
-        OtpVerification::create([
-            'identifier' => $request->mobile_no,
-            'type' => 'login',
-            'otp' => $otp,
-            'is_verified' => false,
-            'expires_at' => Carbon::now()->addMinutes(5),
-        ]);
+        // Generate and store OTP
+        $otp = OtpHelper::generateAndStoreOtp('login', $request->mobile_no, 6, 5);
 
-        Log::info("OTP for {$request->mobile_no}: {$otp}");
+        // Send OTP via SMS
+        $otpHelper = new OtpHelper();
+        $smsResponse = $otpHelper->sendOtp($request->mobile_no, $otp);
+
+        Log::info('OTP Send Response', [
+            'phone' => $request->mobile_no,
+            'otp' => $otp,
+            'sms_response' => $smsResponse
+        ]);
 
         return response()->json([
             'message' => 'OTP sent successfully.',
             'otp' => $otp,
+            'sms_status' => $smsResponse,
         ]);
     }
 
@@ -65,22 +67,24 @@ class AuthController extends Controller
             return response()->json(['error' => $validator->errors()], 422);
         }
 
-        $otpVerification = OtpVerification::where('identifier', $request->mobile_no)
-            ->where('type', 'login')
-            ->latest()
-            ->first();
+        // Verify OTP using OtpHelper
+        $verificationResponse = OtpHelper::verifyOtp('login', $request->mobile_no, $request->otp);
+        $verificationData = $verificationResponse->getData();
 
-        if (!$otpVerification || $otpVerification->otp !== $request->otp || $otpVerification->expires_at < Carbon::now()) {
-            return response()->json(['message' => 'Invalid or expired OTP.'], 401);
+        if ($verificationData->status !== 'success') {
+            return $verificationResponse;
         }
 
-        $user = User::where('mobile_no', $request->mobile_no)->first();
+        $user = User::where('mobile_no', $request->mobile_no)->select('id', 'name', 'email', 'mobile_no', 'category_id', 'role_id', 'team_id', 'refresh_token', 'is_active', 'created_by', 'updated_by', 'device_id', 'ip_address')->first();
 
         if (!$user) {
             return response()->json(['message' => 'User account not found.'], 404);
         }
 
-        $otpVerification->update(['is_verified' => true]);
+        if (!$user->is_active) {
+            return response()->json(['message' => 'Your account is inactive. Login denied.'], 403);
+        }
+
 
         $tokenName = $request->device_name ?: 'api-token';
         $validityDays = 10;
@@ -94,7 +98,7 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'Bearer',
             'token_validity' => (string) $validityDays,
-            'role' => $request->mobile_no == '9999999999' ? 4 : 6,
+            // 'role' => $request->mobile_no == '9999999999' ? 4 : 6,
             'user' => $user,
         ]);
     }
