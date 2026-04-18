@@ -90,6 +90,7 @@ class EventController extends Controller
         $validator = Validator::make($request->all(), [
             'name'             => 'required|string|max:255',
             'date'             => 'required|date',
+            'venue'            => 'nullable|string',
             'description'      => 'nullable|string',
             'coordinator_ids'  => 'required|array',
             'coordinator_ids.*'=> 'exists:master_coordinator_categories,id',
@@ -102,9 +103,14 @@ class EventController extends Controller
         try {
             DB::beginTransaction();
 
+            // Get currently running tenure
+            $tenure = Tenure::latest('id')->first();
+
             $event = Event::create([
                 'name'       => $request->name,
                 'date'       => $request->date,
+                'venue'      => $request->venue,
+                'tenure_id'  => $tenure ? $tenure->id : null,
                 'description'=> $request->description,
                 'created_by' => auth()->id(),
                 'created_ip' => $request->ip(),
