@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->unsignedBigInteger('user_id');
             $table->unsignedBigInteger('tenure_id');
-            $table->unsignedBigInteger('category_id');
+            $table->json('category_id');
             $table->unsignedBigInteger('updated_by')->nullable();
             $table->string('updated_ip', 45)->nullable();
             $table->timestamp('updated_at')->nullable();

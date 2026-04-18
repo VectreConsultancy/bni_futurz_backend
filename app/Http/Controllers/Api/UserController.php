@@ -569,6 +569,19 @@ class UserController extends Controller
         }
 
         try {
+            if ($request->has('category_id')) {
+                $currentTenure = DB::table('tbl_tenure')->orderBy('id', 'desc')->offset(1)->first();
+                
+                DB::table('tbl_user_category_audit')->insert([
+                    'user_id'     => $user->id,
+                    'tenure_id'   => $currentTenure ? $currentTenure->id : DB::table('tbl_tenure')->orderBy('id', 'desc')->first()->id,
+                    'category_id' => json_encode($user->category_id),
+                    'updated_by'  => auth()->id(),
+                    'updated_ip'  => $request->ip(),
+                    'updated_at'  => now(),
+                ]);
+            }
+
             $user->update($request->only(['name', 'mobile_no', 'category_id', 'role_id', 'team_id', 'is_active']));
             
             $user->updated_by = auth()->id();
