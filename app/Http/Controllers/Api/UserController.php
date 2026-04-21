@@ -52,12 +52,15 @@ class UserController extends Controller
                   ->orWhereJsonContains('team_id', (string)$tid)
                   ->orWhere('team_id', $tid);
             }
-        })->pluck('id');
+        })
+        ->whereNull('role_id')
+        ->pluck('id');
 
         $userIds = $individualUserIds->merge($teamUserIds)->unique()->filter();
 
         $users = User::whereIn('id', $userIds)
             ->select('id', 'name', 'category_id', 'team_id')
+            ->whereNull('role_id')
             ->get()
             ->keyBy('id');
 
@@ -147,18 +150,19 @@ class UserController extends Controller
      */
     public function getUsersWithAssignments()
     {
-            $users = User::with(['eventAssignments' => function($q) {
-                $q->with([
-                    'event:id,name,date,description,created_by', 
-                    'category:id,role_id,category_name', 
-                    'category.responsibilities:id,coordinator_id,role_id,name,level,period'
-                ])->orderBy('id', 'desc')
-                ->select('id', 'event_id', 'user_id', 'category_id', 'responsibility_checklist');
-            }])
-            // ->where('is_active', true)
-            ->whereNotNull('category_id')
-            ->select('id', 'name', 'email', 'mobile_no', 'category_id', 'team_id', 'role_id', 'is_active')
-            ->get();
+        $users = User::with(['eventAssignments' => function($q) {
+            $q->with([
+                'event:id,name,date,description,created_by', 
+                'category:id,role_id,category_name', 
+                'category.responsibilities:id,coordinator_id,role_id,name,level,period'
+            ])->orderBy('id', 'desc')
+            ->select('id', 'event_id', 'user_id', 'category_id', 'responsibility_checklist');
+        }])
+        // ->where('is_active', true)
+        ->whereNotNull('category_id')
+        ->whereNull('role_id')
+        ->select('id', 'name', 'email', 'mobile_no', 'category_id', 'team_id', 'role_id', 'is_active')
+        ->get();
 
         // Hydrate users with their human-readable category names
         $categories = CoordinatorCategory::pluck('category_name', 'id');
@@ -600,5 +604,127 @@ class UserController extends Controller
                 'message' => 'Failed to update user: ' . $e->getMessage()
             ], 500);
         }
+    }
+    public function getTenureWiseReport(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'tenure_id'  => 'required|exists:tbl_tenure,id',
+            'start_date' => 'sometimes|nullable|date',
+            'end_date'   => 'sometimes|nullable|date|after_or_equal:start_date',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+        }
+
+        $tenureId = $request->tenure_id;
+        $tenure   = DB::table('tbl_tenure')->find($tenureId);
+
+        $eventQuery = Event::where('tenure_id', $tenureId);
+        
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $startDate = \Carbon\Carbon::parse($request->start_date)->format('Y-m-d');
+            $endDate   = \Carbon\Carbon::parse($request->end_date)->format('Y-m-d');
+            $eventQuery->whereBetween('date', [$startDate, $endDate]);
+        }
+        
+        $eventIds = $eventQuery->pluck('id');
+
+        $individualAssignments = EventAssignment::whereIn('event_id', $eventIds)
+            ->whereNotNull('user_id')
+            ->get();
+
+        $teamAssignments = EventAssignment::whereIn('event_id', $eventIds)
+            ->whereNotNull('team_id')
+            ->get()
+            ->groupBy('team_id');
+
+        $auditRecords = DB::table('tbl_user_category_audit as audit')
+            ->join('users', 'audit.user_id', '=', 'users.id')
+            ->where('audit.tenure_id', $tenureId)
+            ->select('audit.user_id', 'audit.category_id', 'users.name', 'users.team_id')
+            ->get();
+
+        $categories = CoordinatorCategory::pluck('category_name', 'id');
+        $report = [];
+
+        foreach ($auditRecords as $audit) {
+            $userIndividualAssignments = $individualAssignments->where('user_id', $audit->user_id);
+            
+            $totalItems = 0;
+            $completed  = 0;
+
+            // --- Individual checklist items ---
+            foreach ($userIndividualAssignments as $assignment) {
+                $checklist = $assignment->responsibility_checklist ?? [];
+                if (is_array($checklist)) {
+                    foreach ($checklist as $val) {
+                        $totalItems++;
+                        $completed += (int)$val === 1 ? 1 : 0;
+                    }
+                }
+            }
+
+            // --- Team checklist items ---
+            $teamIdRaw = $audit->team_id;
+            if (!is_null($teamIdRaw) && $teamIdRaw !== '0' && $teamIdRaw !== '') {
+                $userTeamIds = (is_string($teamIdRaw) && str_starts_with($teamIdRaw, '['))
+                    ? json_decode($teamIdRaw, true)
+                    : [(int)$teamIdRaw];
+
+                foreach ($userTeamIds as $teamId) {
+                    $teamRows = $teamAssignments->get($teamId, collect());
+                    foreach ($teamRows as $assignment) {
+                        $checklist = $assignment->responsibility_checklist ?? [];
+                        if (is_array($checklist)) {
+                            foreach ($checklist as $val) {
+                                $totalItems++;
+                                $status = is_array($val) ? (int)($val['status'] ?? 0) : (int)$val;
+                                $completed += $status === 1 ? 1 : 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            $percentage = $totalItems > 0 ? round(($completed / $totalItems) * 100, 1) : 0;
+
+            // Categories from AUDIT (this is the key historical data)
+            $catIds = json_decode($audit->category_id, true);
+            if (!is_array($catIds)) {
+                $catIds = $audit->category_id ? [$audit->category_id] : [];
+            }
+            $categoryNames = collect($catIds)->map(fn($id) => $categories[$id] ?? null)->filter()->values();
+
+            $individualEventIds = $userIndividualAssignments->pluck('event_id');
+            $teamEventIds = collect();
+            if (!is_null($teamIdRaw) && $teamIdRaw !== '0' && $teamIdRaw !== '') {
+                foreach ($userTeamIds as $teamId) {
+                    $teamEventIds = $teamEventIds->concat($teamAssignments->get($teamId, collect())->pluck('event_id'));
+                }
+            }
+            $allParticipatedEventIds = $individualEventIds->concat($teamEventIds)->unique();
+
+            $report[] = [
+                'user_id'               => $audit->user_id,
+                'user_name'             => $audit->name,
+                'tenure_name'           => $tenure->year . ' (' . $tenure->tenure . ')',
+                'category_names'        => $categoryNames,
+                'total_events'          => $allParticipatedEventIds->count(),
+                'total_checklist_items' => $totalItems,
+                'completed'             => $completed,
+                'pending'               => $totalItems - $completed,
+                'completion_percentage' => $percentage,
+            ];
+        }
+
+        usort($report, fn($a, $b) => $b['completion_percentage'] <=> $a['completion_percentage']);
+
+        return response()->json([
+            'status' => 'success',
+            'tenure' => $tenure->year . ' ' . $tenure->tenure,
+            'total_events_in_tenure' => $eventIds->count(),
+            'data'   => $report,
+        ]);
     }
 }
