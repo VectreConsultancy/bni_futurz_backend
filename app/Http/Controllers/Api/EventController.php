@@ -53,10 +53,10 @@ class EventController extends Controller
                     $clonedCategory = clone $assignment->category;
                     if ($clonedCategory->responsibilities) {
                         $clonedResps = $clonedCategory->responsibilities->map(fn($r) => clone $r);
-                        
+
                         $checklist = $assignment->responsibility_checklist ?? [];
                         $isTeam    = !is_null($assignment->team_id);
-                        
+
                         foreach ($clonedResps as $resp) {
                             $val = $checklist[$resp->id] ?? ($checklist[(string)$resp->id] ?? ($isTeam ? [] : 0));
                             if ($isTeam) {
@@ -103,8 +103,28 @@ class EventController extends Controller
         try {
             DB::beginTransaction();
 
-            // Get currently running tenure
-            $tenure = Tenure::latest('id')->first();
+            $eventDate = \Carbon\Carbon::parse($request->date);
+            $year      = $eventDate->year;
+            $month     = $eventDate->month;
+
+            // APR-SEP: Months 4-9
+            // OCT-MAR: Months 10-12 (of Year) or 1-3 (of Year-1)
+            if ($month >= 4 && $month <= 9) {
+                $tenureType = 'APR-SEP';
+                $searchYear = $year;
+            } else {
+                $tenureType = 'OCT-MAR';
+                // If it's JAN-MAR, it belongs to the tenure starting in OCT of PREVIOUS year
+                $searchYear = ($month >= 1 && $month <= 3) ? $year - 1 : $year;
+            }
+
+            $tenure = Tenure::where('year', (string)$searchYear)
+                ->where('tenure', $tenureType)
+                ->first();
+
+            if (!$tenure) {
+                $tenure = Tenure::latest('id')->first();
+            }
 
             $event = Event::create([
                 'name'       => $request->name,
@@ -149,7 +169,7 @@ class EventController extends Controller
                                 'category_id' => $catId,
                             ],
                             [
-                                'user_id'                 => null, 
+                                'user_id'                 => null,
                                 'responsibility_checklist'=> $checklist,
                                 'created_by'              => auth()->id(),
                                 'created_ip'              => $request->ip(),
