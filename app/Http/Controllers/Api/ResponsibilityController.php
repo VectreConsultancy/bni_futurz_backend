@@ -362,18 +362,24 @@ class ResponsibilityController extends Controller
 
         $assignments = $query->orderBy('updated_at', 'desc')->get();
 
-        // Get all role responsibilities to map IDs to names
-        $allResps = Responsibility::all(['id', 'name'])->keyBy('id');
+        // Pre-fetch all role-based responsibilities to map correctly
+        $allRoleResps = Responsibility::whereNotNull('role_id')->get()
+            ->groupBy(function($item) {
+                return $item->role_id . '-' . $item->period;
+            });
 
-        $report = $assignments->map(function($assignment) use ($allResps) {
-            $checklist = $assignment->responsibility_checklist ?? [];
+        $report = $assignments->map(function($assignment) use ($allRoleResps) {
+            $key = $assignment->role_id . '-' . $assignment->period;
+            $roleResps = $allRoleResps->get($key, collect());
+            
+            $dbChecklist = $assignment->responsibility_checklist ?? [];
             $detailedChecklist = [];
-            foreach ($checklist as $id => $status) {
-                $resp = $allResps->get($id);
+
+            foreach ($roleResps as $resp) {
                 $detailedChecklist[] = [
-                    'responsibility_id' => $id,
-                    'name'              => $resp ? $resp->name : 'Unknown',
-                    'status'            => (int)$status
+                    'responsibility_id' => $resp->id,
+                    'name'              => $resp->name,
+                    'status'            => (int)($dbChecklist[$resp->id] ?? 0)
                 ];
             }
 
