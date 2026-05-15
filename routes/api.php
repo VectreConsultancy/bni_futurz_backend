@@ -30,6 +30,7 @@ Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
     // Route::delete('/responsibilities/{id}', [ResponsibilityController::class, 'destroy']);
     Route::get('/role-responsibilities', [ResponsibilityController::class, 'getMyRoleResponsibilities']);
     Route::post('/update-role-responsibilities', [ResponsibilityController::class, 'updateMyRoleResponsibilities']);
+    Route::get('/role-assignments-report', [ResponsibilityController::class, 'getRoleAssignmentsReport']);
 
     // Event APIs
     Route::get('/events', [EventController::class, 'index']);

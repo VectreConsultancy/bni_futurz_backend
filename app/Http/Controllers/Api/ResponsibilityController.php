@@ -160,11 +160,11 @@ class ResponsibilityController extends Controller
 
         // --- Fetch Checklists for each period ---
         
-        // 1. Weekly: Use current week (tied to Friday)
-        $currentFriday = (clone $now)->next(\Carbon\Carbon::FRIDAY);
-        if ($now->isFriday()) $currentFriday = $now;
-        $weekNum = $currentFriday->weekOfYear;
-        $weekYear = $currentFriday->year;
+        // 1. Weekly: Use current week (Friday to Thursday)
+        // Identification date is the Friday that started the current week.
+        $referenceFriday = $now->isFriday() ? (clone $now) : (clone $now)->previous(\Carbon\Carbon::FRIDAY);
+        $weekNum = $referenceFriday->weekOfYear;
+        $weekYear = $referenceFriday->year;
 
         $weeklyAssignment = \App\Models\RoleAssignment::where('user_id', $user->id)
             ->where('role_id', $user->role_id)
@@ -279,10 +279,10 @@ class ResponsibilityController extends Controller
                     'period'    => $period,
                 ];
 
-                if ($period == 1) { // Weekly (Friday)
-                    $targetFriday = (clone $now)->startOfWeek(\Carbon\Carbon::MONDAY)->addDays(4);
-                    $match['week_number'] = $targetFriday->weekOfYear;
-                    $match['year'] = $targetFriday->year;
+                if ($period == 1) { // Weekly (Friday to Thursday)
+                    $referenceFriday = $now->isFriday() ? (clone $now) : (clone $now)->previous(\Carbon\Carbon::FRIDAY);
+                    $match['week_number'] = $referenceFriday->weekOfYear;
+                    $match['year'] = $referenceFriday->year;
                 } elseif ($period == 2) { // Monthly (1st of month)
                     $match['month_number'] = $month;
                     $match['year'] = $year;
@@ -322,5 +322,78 @@ class ResponsibilityController extends Controller
                 'message' => 'Failed to update responsibilities: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function getRoleAssignmentsReport(Request $request)
+    {
+        $currentUser = $request->user();
+        if (!$currentUser || !in_array((int)$currentUser->role_id, [1, 2])) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized access.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'tenure_id' => 'required|exists:tbl_tenure,id',
+            'role_id'   => 'sometimes|nullable|exists:master_roles,role_id',
+            'period'    => 'sometimes|nullable|integer|in:1,2,3',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'message' => $validator->errors()->first()], 422);
+        }
+
+        $query = \App\Models\RoleAssignment::with('user:id,name', 'tenure:id,year,tenure')
+            ->where('tenure_id', $request->tenure_id);
+
+        if ($request->filled('role_id')) {
+            $query->where('role_id', $request->role_id);
+        }
+        if ($request->filled('period')) {
+            $query->where('period', $request->period);
+        }
+        if ($request->filled('week_number')) {
+            $query->where('week_number', $request->week_number);
+        }
+        if ($request->filled('month_number')) {
+            $query->where('month_number', $request->month_number);
+        }
+        if ($request->filled('year')) {
+            $query->where('year', $request->year);
+        }
+
+        $assignments = $query->orderBy('updated_at', 'desc')->get();
+
+        // Get all role responsibilities to map IDs to names
+        $allResps = Responsibility::all(['id', 'name'])->keyBy('id');
+
+        $report = $assignments->map(function($assignment) use ($allResps) {
+            $checklist = $assignment->responsibility_checklist ?? [];
+            $detailedChecklist = [];
+            foreach ($checklist as $id => $status) {
+                $resp = $allResps->get($id);
+                $detailedChecklist[] = [
+                    'responsibility_id' => $id,
+                    'name'              => $resp ? $resp->name : 'Unknown',
+                    'status'            => (int)$status
+                ];
+            }
+
+            return [
+                'id'                 => $assignment->id,
+                'user_name'          => $assignment->user->name ?? 'Unknown',
+                'role_id'            => $assignment->role_id,
+                'tenure'             => $assignment->tenure ? $assignment->tenure->year . ' ' . $assignment->tenure->tenure : '',
+                'period'             => (int)$assignment->period,
+                'week_number'        => $assignment->week_number,
+                'month_number'       => $assignment->month_number,
+                'year'               => $assignment->year,
+                'checklist'          => $detailedChecklist,
+                'updated_at'         => $assignment->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => $report
+        ]);
     }
 }
