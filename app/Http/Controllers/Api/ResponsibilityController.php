@@ -15,7 +15,7 @@ class ResponsibilityController extends Controller
     {
         return response()->json([
             'status' => 'success',
-            'data' => Responsibility::with('category')->get(),
+            'data' => Responsibility::with('category:id,role_id,category_name')->select('id', 'coordinator_id', 'name', 'level')->get(),
         ]);
     }
 
@@ -132,15 +132,76 @@ class ResponsibilityController extends Controller
         if (!$user || !$user->role_id) {
             return response()->json([
                 'status' => 'success',
-                'data' => []
+                'data' => (object)[]
             ]);
         }
 
-        $responsibilities = Responsibility::where('role_id', $user->role_id)
-            ->get()
-            ->groupBy('period');
+        $responsibilities = Responsibility::where('role_id', $user->role_id)->get();
 
-        // Human-readable keys for periods
+        // Get current tenure
+        $now = \Carbon\Carbon::now();
+        $year = $now->year;
+        $month = $now->month;
+        if ($month >= 4 && $month <= 9) {
+            $tenureType = 'APR-SEP';
+            $searchYear = $year;
+        } else {
+            $tenureType = 'OCT-MAR';
+            $searchYear = ($month >= 1 && $month <= 3) ? $year - 1 : $year;
+        }
+
+        $tenure = \App\Models\Tenure::where('year', (string)$searchYear)
+            ->where('tenure', $tenureType)
+            ->first();
+
+        if (!$tenure) {
+            return response()->json(['status' => 'error', 'message' => 'Active tenure not found.'], 404);
+        }
+
+        // --- Fetch Checklists for each period ---
+        
+        // 1. Weekly: Use current week (tied to Friday)
+        $currentFriday = (clone $now)->next(\Carbon\Carbon::FRIDAY);
+        if ($now->isFriday()) $currentFriday = $now;
+        $weekNum = $currentFriday->weekOfYear;
+        $weekYear = $currentFriday->year;
+
+        $weeklyAssignment = \App\Models\RoleAssignment::where('user_id', $user->id)
+            ->where('role_id', $user->role_id)
+            ->where('period', 1)
+            ->where('week_number', $weekNum)
+            ->where('year', $weekYear)
+            ->first();
+
+        // 2. Monthly: Use current month
+        $monthlyAssignment = \App\Models\RoleAssignment::where('user_id', $user->id)
+            ->where('role_id', $user->role_id)
+            ->where('period', 2)
+            ->where('month_number', $month)
+            ->where('year', $year)
+            ->first();
+
+        // 3. Tenure: Use current tenure
+        $tenureAssignment = \App\Models\RoleAssignment::where('user_id', $user->id)
+            ->where('role_id', $user->role_id)
+            ->where('period', 3)
+            ->where('tenure_id', $tenure->id)
+            ->first();
+
+        $checklists = [
+            1 => $weeklyAssignment ? ($weeklyAssignment->responsibility_checklist ?? []) : [],
+            2 => $monthlyAssignment ? ($monthlyAssignment->responsibility_checklist ?? []) : [],
+            3 => $tenureAssignment ? ($tenureAssignment->responsibility_checklist ?? []) : [],
+        ];
+
+        // Attach status to each responsibility
+        foreach ($responsibilities as $resp) {
+            $periodChecklist = $checklists[$resp->period] ?? [];
+            $resp->status = (int)($periodChecklist[$resp->id] ?? 0);
+        }
+
+        $grouped = $responsibilities->groupBy('period');
+
         $periods = [
             1 => 'weekly',
             2 => 'monthly',
@@ -149,12 +210,117 @@ class ResponsibilityController extends Controller
 
         $formatted = [];
         foreach ($periods as $id => $name) {
-            $formatted[$name] = $responsibilities->get($id) ?? [];
+            $formatted[$name] = $grouped->get($id) ?? [];
         }
 
         return response()->json([
             'status' => 'success',
             'data' => (object)$formatted,
         ]);
+    }
+
+    public function updateMyRoleResponsibilities(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'checklist' => 'required|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'message' => $validator->errors()->first()], 422);
+        }
+
+        $user = auth()->user();
+        if (!$user || !$user->role_id) {
+            return response()->json(['status' => 'error', 'message' => 'Role not found for user.'], 403);
+        }
+
+        // Get current tenure
+        $now = \Carbon\Carbon::now();
+        $year = $now->year;
+        $month = $now->month;
+        if ($month >= 4 && $month <= 9) {
+            $tenureType = 'APR-SEP';
+            $searchYear = $year;
+        } else {
+            $tenureType = 'OCT-MAR';
+            $searchYear = ($month >= 1 && $month <= 3) ? $year - 1 : $year;
+        }
+
+        $tenure = \App\Models\Tenure::where('year', (string)$searchYear)
+            ->where('tenure', $tenureType)
+            ->first();
+
+        if (!$tenure) {
+            return response()->json(['status' => 'error', 'message' => 'Active tenure not found.'], 404);
+        }
+
+        // Group items by period
+        $items = $request->checklist;
+        $respIds = array_keys($items);
+        $respInfo = Responsibility::whereIn('id', $respIds)->get(['id', 'period'])->keyBy('id');
+
+        $groupedItems = [1 => [], 2 => [], 3 => []];
+        foreach ($items as $id => $status) {
+            $period = $respInfo[$id]->period ?? 3;
+            $groupedItems[$period][(int)$id] = (int)$status;
+        }
+
+        try {
+            \Illuminate\Support\Facades\DB::beginTransaction();
+            $results = [];
+
+            foreach ($groupedItems as $period => $checklist) {
+                if (empty($checklist)) continue;
+
+                $match = [
+                    'user_id'   => $user->id,
+                    'role_id'   => $user->role_id,
+                    'tenure_id' => $tenure->id,
+                    'period'    => $period,
+                ];
+
+                if ($period == 1) { // Weekly (Friday)
+                    $targetFriday = (clone $now)->startOfWeek(\Carbon\Carbon::MONDAY)->addDays(4);
+                    $match['week_number'] = $targetFriday->weekOfYear;
+                    $match['year'] = $targetFriday->year;
+                } elseif ($period == 2) { // Monthly (1st of month)
+                    $match['month_number'] = $month;
+                    $match['year'] = $year;
+                }
+
+                $existing = \App\Models\RoleAssignment::where($match)->first();
+                $finalChecklist = $checklist;
+                if ($existing) {
+                    $oldChecklist = $existing->responsibility_checklist ?? [];
+                    // Use string keys for merge to avoid re-indexing if IDs are numeric but treated as keys
+                    $finalChecklist = $checklist + $oldChecklist; 
+                }
+
+                $assignment = \App\Models\RoleAssignment::updateOrCreate(
+                    $match,
+                    [
+                        'responsibility_checklist' => $finalChecklist,
+                        'updated_ip'               => $request->ip(),
+                        'created_ip'               => $existing ? $existing->created_ip : $request->ip(),
+                    ]
+                );
+                $results[] = $assignment;
+            }
+
+            \Illuminate\Support\Facades\DB::commit();
+
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Role responsibilities updated successfully.',
+                'data'    => $results
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\DB::rollBack();
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Failed to update responsibilities: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
