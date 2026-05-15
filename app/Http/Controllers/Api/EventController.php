@@ -237,6 +237,14 @@ class EventController extends Controller
         if ($validator->fails()) {
             return response()->json(['status' => 'error', 'message' => $validator->errors()->first()], 422);
         }
+            
+        $exists = Tenure::where('year', $request->year)
+            ->where('tenure', $request->tenure)
+            ->exists();
+
+        if ($exists) {
+            return response()->json(['status' => 'error', 'message' => 'Tenure already exists for this year and period.'], 422);
+        }
 
         $tenure = Tenure::create([
             'year'       => $request->year,
