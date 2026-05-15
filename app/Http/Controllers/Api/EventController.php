@@ -97,7 +97,7 @@ class EventController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+            return response()->json(['status' => 'error', 'message' => $validator->errors()->first()], 422);
         }
 
         try {
@@ -235,7 +235,7 @@ class EventController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['status' => 'error', 'errors' => $validator->errors()], 422);
+            return response()->json(['status' => 'error', 'message' => $validator->errors()->first()], 422);
         }
 
         $tenure = Tenure::create([

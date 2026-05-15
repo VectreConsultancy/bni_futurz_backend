@@ -58,11 +58,29 @@ class UserController extends Controller
 
         $userIds = $individualUserIds->merge($teamUserIds)->unique()->filter();
 
+        // --- Role-based Filtering ---
+        $currentUser = $request->user();
+        $managedCategoryIds = null;
+        if ($currentUser && in_array((int)$currentUser->role_id, [3, 4, 5])) {
+            $managedCategoryIds = DB::table('master_coordinator_categories')
+                ->where('role_id', (int)$currentUser->role_id)
+                ->pluck('id')
+                ->map(fn($id) => (int)$id)
+                ->toArray();
+        }
+
         $users = User::whereIn('id', $userIds)
             ->select('id', 'name', 'category_id', 'team_id')
             ->whereNull('role_id')
-            ->get()
-            ->keyBy('id');
+            ->get();
+
+        if ($managedCategoryIds !== null) {
+            $users = $users->filter(function($user) use ($managedCategoryIds) {
+                $catIds = array_map('intval', $this->getUserCategoryIds($user));
+                return !empty(array_intersect($catIds, $managedCategoryIds));
+            });
+        }
+        $users = $users->keyBy('id');
 
         $categories = CoordinatorCategory::pluck('category_name', 'id');
         $report = [];
@@ -148,8 +166,18 @@ class UserController extends Controller
     /**
      * Get all users with their event assignments (Admin view).
      */
-    public function getUsersWithAssignments()
+    public function getUsersWithAssignments(Request $request)
     {
+        $currentUser = $request->user();
+        $managedCategoryIds = null;
+        if ($currentUser && in_array((int)$currentUser->role_id, [3, 4, 5])) {
+            $managedCategoryIds = DB::table('master_coordinator_categories')
+                ->where('role_id', (int)$currentUser->role_id)
+                ->pluck('id')
+                ->map(fn($id) => (int)$id)
+                ->toArray();
+        }
+
         $users = User::with(['eventAssignments' => function($q) {
             $q->with([
                 'event:id,name,date,description,created_by', 
@@ -163,6 +191,14 @@ class UserController extends Controller
         ->whereNull('role_id')
         ->select('id', 'name', 'email', 'mobile_no', 'category_id', 'team_id', 'role_id', 'is_active')
         ->get();
+
+        if ($managedCategoryIds !== null) {
+            $users = $users->filter(function ($user) use ($managedCategoryIds) {
+                $catIds = array_map('intval', $this->getUserCategoryIds($user));
+                return !empty(array_intersect($catIds, $managedCategoryIds));
+            });
+            $users = $users->values(); // Reset keys
+        }
 
         // Hydrate users with their human-readable category names
         $categories = CoordinatorCategory::pluck('category_name', 'id');
@@ -605,6 +641,7 @@ class UserController extends Controller
             ], 500);
         }
     }
+
     public function getTenureWiseReport(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -644,6 +681,23 @@ class UserController extends Controller
             ->where('audit.tenure_id', $tenureId)
             ->select('audit.user_id', 'audit.category_id', 'users.name', 'users.team_id')
             ->get();
+
+        // --- Role-based Filtering ---
+        $currentUser = $request->user();
+        if ($currentUser && in_array((int)$currentUser->role_id, [3, 4, 5])) {
+            $managedCategoryIds = DB::table('master_coordinator_categories')
+                ->where('role_id', (int)$currentUser->role_id)
+                ->pluck('id')
+                ->map(fn($id) => (int)$id)
+                ->toArray();
+            
+            $auditRecords = $auditRecords->filter(function($audit) use ($managedCategoryIds) {
+                $catIds = json_decode($audit->category_id, true);
+                if (!is_array($catIds)) $catIds = $audit->category_id ? [$audit->category_id] : [];
+                $catIds = array_map('intval', $catIds);
+                return !empty(array_intersect($catIds, $managedCategoryIds));
+            });
+        }
 
         $categories = CoordinatorCategory::pluck('category_name', 'id');
         $report = [];
