@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\UserController;
 
 Route::post('/auth/send-otp', [AuthController::class, 'sendOtp']);
 Route::post('/auth/login', [AuthController::class, 'login'])->name('login');
+Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -20,7 +21,7 @@ Route::get('/user', function (Request $request) {
 Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
     Route::get('/coordinator-categories', [MasterDataController::class, 'getCategories']);
-    
+
     // Responsibility APIs
     Route::get('/responsibilities', [ResponsibilityController::class, 'index']);
     Route::post('/responsibilities', [ResponsibilityController::class, 'store']);
@@ -28,6 +29,7 @@ Route::middleware(['auth:sanctum', 'check_status'])->group(function () {
     Route::put('/responsibilities/{id}', [ResponsibilityController::class, 'update']);
     // Route::delete('/responsibilities/{id}', [ResponsibilityController::class, 'destroy']);
     Route::get('/role-responsibilities', [ResponsibilityController::class, 'getMyRoleResponsibilities']);
+    Route::post('/update-role-responsibilities', [ResponsibilityController::class, 'updateMyRoleResponsibilities']);
 
     // Event APIs
     Route::get('/events', [EventController::class, 'index']);
